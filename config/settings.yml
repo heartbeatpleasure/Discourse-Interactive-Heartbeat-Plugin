@@ -1,0 +1,74 @@
+plugins:
+  interactive_heartbeat_enabled:
+    default: false
+    client: true
+
+  interactive_heartbeat_nav_enabled:
+    default: true
+    client: true
+
+  interactive_heartbeat_allowed_groups:
+    default: "trust_level_0"
+    type: list
+    client: false
+
+  interactive_heartbeat_lovense_developer_token:
+    default: ""
+    type: string
+    secret: true
+    client: false
+
+  interactive_heartbeat_lovense_platform_name:
+    default: "Heartbeat Pleasure"
+    type: string
+    client: false
+
+  interactive_heartbeat_lovense_app_type:
+    default: "remote"
+    type: enum
+    choices:
+      - remote
+      - connect
+    client: false
+
+  interactive_heartbeat_invite_expiry_minutes:
+    default: 60
+    type: integer
+    min: 5
+    max: 1440
+    client: false
+
+  interactive_heartbeat_presence_timeout_seconds:
+    default: 20
+    type: integer
+    min: 10
+    max: 120
+    client: false
+
+  interactive_heartbeat_signal_stale_seconds:
+    default: 8
+    type: integer
+    min: 3
+    max: 30
+    client: false
+
+  interactive_heartbeat_signal_poll_ms:
+    default: 1000
+    type: integer
+    min: 500
+    max: 5000
+    client: true
+
+  interactive_heartbeat_default_pulse_strength:
+    default: 12
+    type: integer
+    min: 1
+    max: 20
+    client: true
+
+  interactive_heartbeat_default_pulse_duration_ms:
+    default: 180
+    type: integer
+    min: 100
+    max: 500
+    client: true

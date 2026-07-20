@@ -1,0 +1,14 @@
+en:
+  site_settings:
+    interactive_heartbeat_enabled: "Enable private Interactive Heartbeat sessions. Requires the Heartrate plugin and asynchronous current readings."
+    interactive_heartbeat_nav_enabled: "Allow the theme component to show the Interactive Heartbeat navigation item."
+    interactive_heartbeat_allowed_groups: "Groups allowed to create and participate in Interactive Heartbeat sessions."
+    interactive_heartbeat_lovense_developer_token: "Lovense developer token. Kept server-side and only used to request per-user authorization tokens."
+    interactive_heartbeat_lovense_platform_name: "Website name configured in the Lovense developer dashboard."
+    interactive_heartbeat_lovense_app_type: "Lovense app used for pairing: Lovense Remote or Lovense Connect."
+    interactive_heartbeat_invite_expiry_minutes: "Minutes before an unanswered session invitation expires."
+    interactive_heartbeat_presence_timeout_seconds: "Seconds without participant presence before an active session is paused."
+    interactive_heartbeat_signal_stale_seconds: "Maximum age of a heart-rate reading used for toy control."
+    interactive_heartbeat_signal_poll_ms: "Client interval for refreshing the current heartbeat control signal."
+    interactive_heartbeat_default_pulse_strength: "Default Lovense vibration strength for each heartbeat pulse (1-20)."
+    interactive_heartbeat_default_pulse_duration_ms: "Default duration of each heartbeat vibration pulse in milliseconds."
