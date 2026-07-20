@@ -577,7 +577,9 @@ module ::InteractiveHeartbeat
       [[parsed, minimum].max, maximum].min
     end
 
-    def render_json(payload = {}, status: 200)
+    def render_json(payload = nil, status: 200, **keyword_payload)
+      payload = keyword_payload if payload.nil?
+      payload = {} if payload.nil?
       render json: payload, status: status
     end
 
