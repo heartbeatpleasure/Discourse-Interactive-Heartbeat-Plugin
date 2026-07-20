@@ -20,7 +20,8 @@ RSpec.describe InteractiveHeartbeat::HeartSignal do
     SiteSetting.live_metrics_enabled = true
     SiteSetting.live_metrics_hyperate_enabled = true
     SiteSetting.live_metrics_async_current_readings_enabled = true
-    SiteSetting.interactive_heartbeat_signal_stale_seconds = 8
+    SiteSetting.interactive_heartbeat_signal_unstable_seconds = 5
+    SiteSetting.interactive_heartbeat_signal_stale_seconds = 12
     SiteSetting.interactive_heartbeat_signal_poll_ms = 1000
     SiteSetting.interactive_heartbeat_presence_timeout_seconds = 20
     LiveMetrics::RefreshCoordinator.stubs(:async_enabled?).returns(true)
@@ -79,13 +80,50 @@ RSpec.describe InteractiveHeartbeat::HeartSignal do
     signal = described_class.for(session: session, target_participant: target)
 
     expect(signal[:active]).to eq(true)
+    expect(signal[:signal_state]).to eq("live")
     expect(signal.dig(:pulse, :interval_ms)).to be_within(2).of(750)
     expect(signal.dig(:pulse, :strength)).to eq(9)
     expect(signal.dig(:source, :heart_rate)).to be_nil
-    expect(signal[:expires_at_ms] - signal[:server_time_ms]).to be <= 2500
+    expect(signal[:source_age_ms]).to be < 1000
+    expect(signal[:valid_for_ms]).to be_between(10_000, 12_000)
+    expect(signal[:lost_after_ms]).to eq(12_000)
   end
 
-  it "pauses the session instead of reusing a stale reading" do
+  it "keeps a command gap at high heart rates" do
+    session, target = active_session
+    LiveMetrics::CurrentStateStore.write(
+      source_account,
+      status: "live",
+      heart_rate: 220,
+      measured_at_ms: (Time.zone.now.to_f * 1000).to_i,
+    )
+
+    signal = described_class.for(session: session, target_participant: target)
+
+    expect(signal[:active]).to eq(true)
+    expect(signal.dig(:pulse, :interval_ms)).to eq(273)
+    expect(signal.dig(:pulse, :duration_ms)).to eq(133)
+  end
+
+  it "keeps using the last reading during the unstable grace window" do
+    session, target = active_session
+    LiveMetrics::CurrentStateStore.write(
+      source_account,
+      status: "live",
+      heart_rate: 90,
+      measured_at_ms: (7.seconds.ago.to_f * 1000).to_i,
+    )
+
+    signal = described_class.for(session: session, target_participant: target)
+
+    expect(signal[:active]).to eq(true)
+    expect(signal[:signal_state]).to eq("unstable")
+    expect(signal[:source_age_ms]).to be_between(6000, 8000)
+    expect(signal[:valid_for_ms]).to be_between(4000, 6000)
+    expect(session.reload.status).to eq(InteractiveHeartbeat::Session::STATUS_ACTIVE)
+  end
+
+  it "pauses the session after the hard signal-loss threshold" do
     session, target = active_session
     LiveMetrics::CurrentStateStore.write(
       source_account,
@@ -99,5 +137,16 @@ RSpec.describe InteractiveHeartbeat::HeartSignal do
     expect(signal[:active]).to eq(false)
     expect(signal[:reason]).to eq("no_fresh_heartbeat")
     expect(session.reload.status).to eq(InteractiveHeartbeat::Session::STATUS_PAUSED)
+  end
+
+  it "does not pause an active session for a transient state-store read error" do
+    session, target = active_session
+    LiveMetrics::CurrentStateStore.stubs(:read).raises(Redis::BaseError.new("temporary"))
+
+    signal = described_class.for(session: session, target_participant: target)
+
+    expect(signal[:active]).to eq(false)
+    expect(signal[:reason]).to eq("signal_temporarily_unavailable")
+    expect(session.reload.status).to eq(InteractiveHeartbeat::Session::STATUS_ACTIVE)
   end
 end

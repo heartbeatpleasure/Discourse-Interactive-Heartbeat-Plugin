@@ -52,11 +52,18 @@ plugins:
     max: 120
     client: false
 
-  interactive_heartbeat_signal_stale_seconds:
-    default: 8
+  interactive_heartbeat_signal_unstable_seconds:
+    default: 5
     type: integer
-    min: 3
-    max: 30
+    min: 2
+    max: 20
+    client: false
+
+  interactive_heartbeat_signal_stale_seconds:
+    default: 12
+    type: integer
+    min: 6
+    max: 60
     client: false
 
   interactive_heartbeat_signal_poll_ms:

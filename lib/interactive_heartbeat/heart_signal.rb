@@ -6,32 +6,51 @@ module ::InteractiveHeartbeat
     MAX_HEART_RATE = 220
     MIN_INTERVAL_MS = 273
     MAX_INTERVAL_MS = 2000
+    MIN_COMMAND_GAP_MS = 140
 
     class << self
       def for(session:, target_participant:)
         session.refresh_presence_state!
-        return inactive_payload(session) unless session.status == ::InteractiveHeartbeat::Session::STATUS_ACTIVE
+        return inactive_payload(session, "session_not_active") unless session.status == ::InteractiveHeartbeat::Session::STATUS_ACTIVE
 
         source_participant = session.other_participant(target_participant.user_id)
-        return inactive_payload(session) if source_participant.blank?
-        return inactive_payload(session) unless session.direction_enabled?(source_participant.user_id, target_participant.user_id)
-        return inactive_payload(session) unless source_participant.heartbeat_consent?
-        return inactive_payload(session) unless target_participant.toy_consent?
+        return inactive_payload(session, "source_missing") if source_participant.blank?
+        unless session.direction_enabled?(source_participant.user_id, target_participant.user_id)
+          return inactive_payload(session, "direction_disabled")
+        end
+        return inactive_payload(session, "consent_missing") unless source_participant.heartbeat_consent?
+        return inactive_payload(session, "consent_missing") unless target_participant.toy_consent?
 
-        live = current_live_reading(source_participant.user_id)
+        now_ms = current_time_ms
+        live, failure_reason = current_live_reading(source_participant.user_id)
         if live.blank?
+          if %w[read_error signal_temporarily_unavailable].include?(failure_reason)
+            return unavailable_payload(session, "signal_temporarily_unavailable")
+          end
+
+          session.pause!
+          return unavailable_payload(session.reload, failure_reason || "no_fresh_heartbeat")
+        end
+
+        heart_rate = live[:heart_rate].to_i
+        measured_at_ms = live[:measured_at_ms].to_i
+        source_age_ms = [now_ms - measured_at_ms, 0].max
+        lost_after_ms = signal_lost_seconds * 1000
+        unstable_after_ms = [signal_unstable_seconds * 1000, lost_after_ms - 1000].min
+
+        if source_age_ms >= lost_after_ms
           session.pause!
           return unavailable_payload(session.reload, "no_fresh_heartbeat")
         end
 
-        heart_rate = live[:heart_rate].to_i
         interval_ms = [[(60_000.0 / heart_rate).round, MIN_INTERVAL_MS].max, MAX_INTERVAL_MS].min
-        expires_at_ms = current_time_ms + client_signal_ttl_ms(live)
+        valid_for_ms = [lost_after_ms - source_age_ms, 0].max
 
         {
           active: true,
           status: session.status,
           mode: session.mode,
+          signal_state: source_age_ms >= unstable_after_ms ? "unstable" : "live",
           source: {
             username: source_participant.user.username,
             heart_rate: session.settings_hash[:show_exact_bpm] ? heart_rate : nil,
@@ -39,49 +58,57 @@ module ::InteractiveHeartbeat
           pulse: {
             interval_ms: interval_ms,
             strength: target_participant.pulse_strength,
-            duration_ms: [target_participant.pulse_duration_ms, interval_ms - 80].min,
+            duration_ms: [
+              target_participant.pulse_duration_ms,
+              [interval_ms - MIN_COMMAND_GAP_MS, 100].max,
+            ].min,
           },
-          measured_at_ms: live[:measured_at_ms].to_i,
-          expires_at_ms: expires_at_ms,
-          server_time_ms: current_time_ms,
+          measured_at_ms: measured_at_ms,
+          source_age_ms: source_age_ms,
+          unstable_after_ms: unstable_after_ms,
+          lost_after_ms: lost_after_ms,
+          valid_for_ms: valid_for_ms,
+          expires_at_ms: now_ms + valid_for_ms,
+          server_time_ms: now_ms,
         }
       end
 
       private
 
       def current_live_reading(user_id)
-        return nil unless heartrate_runtime_ready?
+        return [nil, "runtime_not_ready"] unless heartrate_runtime_ready?
 
         account = ::LiveMetrics::ProviderAccount
           .enabled_providers
           .active
           .find_by(user_id: user_id)
-        return nil if account.blank? || !account.connected?
+        return [nil, "source_disconnected"] if account.blank? || !account.connected?
 
         state = ::LiveMetrics::CurrentStateStore.read(account)
-        return nil unless ::LiveMetrics::CurrentStateStore.state_with_reading?(state)
+        unless ::LiveMetrics::CurrentStateStore.state_with_reading?(state)
+          return [nil, "signal_temporarily_unavailable"]
+        end
 
         heart_rate = state[:heart_rate].to_i
-        age_seconds = state[:age_seconds].to_i
-        return nil unless heart_rate.between?(MIN_HEART_RATE, MAX_HEART_RATE)
-        return nil if age_seconds > SiteSetting.interactive_heartbeat_signal_stale_seconds.to_i
+        return [nil, "invalid_heartbeat"] unless heart_rate.between?(MIN_HEART_RATE, MAX_HEART_RATE)
 
-        state
+        [state, nil]
       rescue => e
         Rails.logger.warn(
           "[interactive_heartbeat] heart_signal_failed user_id=#{user_id} " \
           "error=#{e.class}",
         )
-        nil
+        [nil, "read_error"]
       end
 
-      def client_signal_ttl_ms(live)
-        stale_ms = SiteSetting.interactive_heartbeat_signal_stale_seconds.to_i * 1000
-        reading_age_ms = live[:age_seconds].to_i * 1000
-        freshness_remaining_ms = [stale_ms - reading_age_ms, 0].max
-        transport_ttl_ms = (SiteSetting.interactive_heartbeat_signal_poll_ms.to_i * 2) + 500
+      def signal_unstable_seconds
+        unstable = SiteSetting.interactive_heartbeat_signal_unstable_seconds.to_i
+        lost = signal_lost_seconds
+        [[unstable, 2].max, lost - 1].min
+      end
 
-        [[freshness_remaining_ms, transport_ttl_ms].min, 500].max
+      def signal_lost_seconds
+        [SiteSetting.interactive_heartbeat_signal_stale_seconds.to_i, 6].max
       end
 
       def heartrate_runtime_ready?
@@ -91,11 +118,11 @@ module ::InteractiveHeartbeat
           ::LiveMetrics::RefreshCoordinator.async_enabled?
       end
 
-      def inactive_payload(session)
+      def inactive_payload(session, reason)
         {
           active: false,
           status: session.reload.status,
-          reason: "session_not_active",
+          reason: reason,
           server_time_ms: current_time_ms,
         }
       end
@@ -110,7 +137,7 @@ module ::InteractiveHeartbeat
       end
 
       def current_time_ms
-        (Time.now.to_f * 1000).to_i
+        (Time.zone.now.to_f * 1000).to_i
       end
     end
   end

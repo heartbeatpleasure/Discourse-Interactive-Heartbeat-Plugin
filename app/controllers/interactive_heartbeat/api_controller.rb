@@ -79,6 +79,8 @@ module ::InteractiveHeartbeat
             5000,
             1000,
           ),
+          signal_unstable_seconds: signal_unstable_seconds,
+          signal_lost_seconds: signal_lost_seconds,
         },
       )
     end
@@ -521,7 +523,7 @@ module ::InteractiveHeartbeat
       return false unless ::LiveMetrics::CurrentStateStore.state_with_reading?(state)
       return false unless state[:heart_rate].to_i.between?(30, 220)
 
-      state[:age_seconds].to_i <= SiteSetting.interactive_heartbeat_signal_stale_seconds.to_i
+      state[:age_seconds].to_i < signal_lost_seconds
     rescue
       false
     end
@@ -551,6 +553,25 @@ module ::InteractiveHeartbeat
         ::LiveMetrics::RefreshCoordinator.async_enabled?
     rescue
       false
+    end
+
+    def signal_unstable_seconds
+      unstable = bounded_integer(
+        SiteSetting.interactive_heartbeat_signal_unstable_seconds,
+        2,
+        20,
+        5,
+      )
+      [unstable, signal_lost_seconds - 1].min
+    end
+
+    def signal_lost_seconds
+      bounded_integer(
+        SiteSetting.interactive_heartbeat_signal_stale_seconds,
+        6,
+        60,
+        12,
+      )
     end
 
     def ensure_database_ready!
