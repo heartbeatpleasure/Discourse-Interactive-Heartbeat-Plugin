@@ -19,7 +19,7 @@ plugins:
     client: false
 
   interactive_heartbeat_lovense_platform_name:
-    default: "Heartbeat Pleasure"
+    default: "heartbeatpleasure"
     type: string
     client: false
 
@@ -29,6 +29,13 @@ plugins:
     choices:
       - remote
       - connect
+    client: false
+
+  interactive_heartbeat_lovense_callback_ttl_seconds:
+    default: 60
+    type: integer
+    min: 20
+    max: 300
     client: false
 
   interactive_heartbeat_invite_expiry_minutes:

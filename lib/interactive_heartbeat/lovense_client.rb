@@ -38,6 +38,23 @@ module ::InteractiveHeartbeat
         }
       end
 
+      def verified_callback_user(uid:, utoken:)
+        user_id = Integer(uid, exception: false)
+        provided_token = utoken.to_s
+        return nil unless user_id&.positive? && provided_token.present?
+
+        user = ::User.find_by(id: user_id, active: true, staged: false)
+        return nil if user.blank?
+
+        expected_token = user_verification_token(user)
+        return nil unless expected_token.bytesize == provided_token.bytesize
+        return nil unless ActiveSupport::SecurityUtils.secure_compare(expected_token, provided_token)
+
+        user
+      rescue ArgumentError, TypeError
+        nil
+      end
+
       private
 
       def request_token(user)
