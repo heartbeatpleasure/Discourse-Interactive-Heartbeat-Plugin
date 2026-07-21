@@ -7,6 +7,10 @@ plugins:
     default: true
     client: true
 
+  interactive_heartbeat_test_lab_enabled:
+    default: false
+    client: false
+
   interactive_heartbeat_allowed_groups:
     default: "trust_level_0"
     type: list

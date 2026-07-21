@@ -12,6 +12,13 @@ module ::InteractiveHeartbeat
       render layout: "application"
     end
 
+    def test_lab
+      raise Discourse::NotFound unless SiteSetting.interactive_heartbeat_test_lab_enabled
+      raise Discourse::NotFound unless current_user&.admin?
+
+      render layout: "application"
+    end
+
     private
 
     def ensure_enabled

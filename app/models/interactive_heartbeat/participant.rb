@@ -73,6 +73,7 @@ module ::InteractiveHeartbeat
 
     def configuration_accepted?
       return false if session.blank?
+      return false if settings_hash[:configuration_consent_revoked] == true
 
       accepted_configuration_revision == session.configuration_revision ||
         (accepted_configuration_revision.nil? && session.configuration_revision == 1)
@@ -185,6 +186,75 @@ module ::InteractiveHeartbeat
       bounded_integer(settings_hash[:hysteresis_bpm], 0, 10, DEFAULT_HYSTERESIS_BPM)
     end
 
+    def session_permission_scope?
+      settings_hash[:permission_scope].to_s == "session"
+    end
+
+    def session_permissions_granted?
+      return false if session&.terminal?
+      return false unless session_permission_scope?
+      return false unless heartbeat_consent?
+      return false if session&.toy_required_for?(user_id) && !toy_consent?
+
+      configuration_accepted?
+    end
+
+    def missing_session_permissions
+      missing = []
+      missing << "heartbeat" unless heartbeat_consent?
+      missing << "toy" if session&.toy_required_for?(user_id) && !toy_consent?
+      missing << "configuration" unless configuration_accepted?
+      missing
+    end
+
+    def grant_session_permissions!(settings: {})
+      now = Time.zone.now
+      previous = [
+        heartbeat_consent?,
+        toy_consent?,
+        configuration_accepted?,
+        response_settings_payload,
+        session_permission_scope?,
+      ]
+
+      merged_settings = settings_hash.to_h.merge(external_settings_hash(settings))
+      merged_settings["permission_scope"] = "session"
+      assign_attributes(
+        heartbeat_consent_at: heartbeat_consent_at || now,
+        toy_consent_at: session&.toy_required_for?(user_id) ? (toy_consent_at || now) : toy_consent_at,
+        ready_at: nil,
+        settings: normalized_settings(merged_settings),
+      )
+      set_configuration_consent!(true, save: false)
+      save!
+
+      current = [
+        heartbeat_consent?,
+        toy_consent?,
+        configuration_accepted?,
+        response_settings_payload,
+        session_permission_scope?,
+      ]
+      session.pause! if session.status == ::InteractiveHeartbeat::Session::STATUS_ACTIVE && previous != current
+      self
+    end
+
+    def revoke_session_permissions!
+      was_active = session.status == ::InteractiveHeartbeat::Session::STATUS_ACTIVE
+      updated = settings_hash.to_h
+      updated.delete("permission_scope")
+      assign_attributes(
+        heartbeat_consent_at: nil,
+        toy_consent_at: nil,
+        ready_at: nil,
+        settings: normalized_settings(updated),
+      )
+      set_configuration_consent!(false, save: false)
+      save!
+      session.pause! if was_active
+      self
+    end
+
     def response_settings_payload
       {
         response_mode: response_mode,
@@ -213,8 +283,10 @@ module ::InteractiveHeartbeat
       updated = settings_hash.to_h
       if accepted && revision.to_i.positive?
         updated["accepted_configuration_revision"] = revision.to_i
+        updated.delete("configuration_consent_revoked")
       else
         updated.delete("accepted_configuration_revision")
+        updated["configuration_consent_revoked"] = true
       end
       self.settings = normalized_settings(updated)
       save! if save
@@ -222,11 +294,10 @@ module ::InteractiveHeartbeat
     end
 
     def update_preferences!(heartbeat_consent:, toy_consent:, configuration_consent:, ready:, settings:)
-      previous = [
+      previous_permissions = [
         heartbeat_consent?,
         toy_consent?,
         configuration_accepted?,
-        response_settings_payload,
       ]
       was_ready = ready?
       now = Time.zone.now
@@ -241,20 +312,19 @@ module ::InteractiveHeartbeat
         set_configuration_consent!(configuration_consent, save: false)
       end
 
-      changed_materially = previous != [
+      permissions_changed = previous_permissions != [
         heartbeat_consent?,
         toy_consent?,
         configuration_accepted?,
-        response_settings_payload,
       ]
       self.ready_at =
         if ready && configuration_accepted? && heartbeat_consent_or_not_required? && toy_consent_or_not_required?
-          now
+          ready_at || now
         end
       save!
 
       if session.status == ::InteractiveHeartbeat::Session::STATUS_ACTIVE &&
-           (changed_materially || (was_ready && !ready?))
+           (permissions_changed || (was_ready && !ready?))
         session.pause!
       end
     end
@@ -371,6 +441,8 @@ module ::InteractiveHeartbeat
       }
       accepted_revision = Integer(input[:accepted_configuration_revision], exception: false)
       output["accepted_configuration_revision"] = accepted_revision if accepted_revision&.positive?
+      output["configuration_consent_revoked"] = true if input[:configuration_consent_revoked] == true
+      output["permission_scope"] = "session" if input[:permission_scope].to_s == "session"
       output
     end
 

@@ -8,6 +8,9 @@ module ::InteractiveHeartbeat
       "create_session" => [10, 300],
       "show_session" => [120, 60],
       "accept_session" => [30, 60],
+      "join_session" => [30, 60],
+      "grant_permissions" => [60, 60],
+      "revoke_permissions" => [30, 60],
       "decline_session" => [30, 60],
       "update_participant" => [60, 60],
       "update_configuration" => [30, 60],
@@ -17,6 +20,8 @@ module ::InteractiveHeartbeat
       "presence" => [120, 60],
       "signal" => [180, 60],
       "lovense_token" => [10, 300],
+      "test_lab_signal" => [180, 60],
+      "test_lab_lovense_token" => [10, 300],
     }.freeze
 
     class LimitExceeded < StandardError

@@ -2,7 +2,7 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.4.0
+# version: 0.6.0
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
@@ -48,6 +48,7 @@ after_initialize do
   require_relative "lib/interactive_heartbeat/lovense_callback_store"
   require_relative "lib/interactive_heartbeat/intensity_mapper"
   require_relative "lib/interactive_heartbeat/heart_signal"
+  require_relative "lib/interactive_heartbeat/test_lab_signal"
 
   require_dependency File.expand_path(
     "app/models/interactive_heartbeat/session.rb",
@@ -85,6 +86,7 @@ after_initialize do
   Discourse::Application.routes.append do
     get "/interactive-heartbeat" => "interactive_heartbeat/page#index"
     get "/interactive-heartbeat/sessions/:token" => "interactive_heartbeat/page#index"
+    get "/interactive-heartbeat/test-lab" => "interactive_heartbeat/page#test_lab"
 
     get "/interactive-heartbeat/api/config" => "interactive_heartbeat/api#plugin_config",
         defaults: { format: :json }
@@ -97,6 +99,12 @@ after_initialize do
     get "/interactive-heartbeat/api/sessions/:token" => "interactive_heartbeat/api#show_session",
         defaults: { format: :json }
     put "/interactive-heartbeat/api/sessions/:token/accept" => "interactive_heartbeat/api#accept_session",
+        defaults: { format: :json }
+    put "/interactive-heartbeat/api/sessions/:token/join" => "interactive_heartbeat/api#join_session",
+        defaults: { format: :json }
+    put "/interactive-heartbeat/api/sessions/:token/permissions" => "interactive_heartbeat/api#grant_permissions",
+        defaults: { format: :json }
+    put "/interactive-heartbeat/api/sessions/:token/permissions/revoke" => "interactive_heartbeat/api#revoke_permissions",
         defaults: { format: :json }
     put "/interactive-heartbeat/api/sessions/:token/decline" => "interactive_heartbeat/api#decline_session",
         defaults: { format: :json }
@@ -115,6 +123,10 @@ after_initialize do
     get "/interactive-heartbeat/api/sessions/:token/signal" => "interactive_heartbeat/api#signal",
         defaults: { format: :json }
     post "/interactive-heartbeat/api/lovense/token" => "interactive_heartbeat/api#lovense_token",
+         defaults: { format: :json }
+    post "/interactive-heartbeat/api/test-lab/signal" => "interactive_heartbeat/api#test_lab_signal",
+         defaults: { format: :json }
+    post "/interactive-heartbeat/api/test-lab/lovense/token" => "interactive_heartbeat/api#test_lab_lovense_token",
          defaults: { format: :json }
 
     # Lovense Remote sends this callback without a Discourse login or CSRF token.

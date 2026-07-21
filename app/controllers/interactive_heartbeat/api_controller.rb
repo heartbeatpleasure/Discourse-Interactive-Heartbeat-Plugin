@@ -11,6 +11,7 @@ module ::InteractiveHeartbeat
     before_action :ensure_enabled
     before_action :ensure_logged_in
     before_action :ensure_allowed
+    before_action :ensure_test_lab_admin, only: %i[test_lab_signal test_lab_lovense_token]
     before_action :enforce_request_rate_limit
 
     class << self
@@ -66,6 +67,8 @@ module ::InteractiveHeartbeat
         ),
         session_modes: ::InteractiveHeartbeat::Session::PUBLIC_MODES,
         response_modes: ::InteractiveHeartbeat::Participant::RESPONSE_MODES,
+        test_lab_enabled: SiteSetting.interactive_heartbeat_test_lab_enabled && current_user.admin?,
+        test_lab_url: "/interactive-heartbeat/test-lab",
       )
     end
 
@@ -146,17 +149,18 @@ module ::InteractiveHeartbeat
           expires_at: SiteSetting.interactive_heartbeat_invite_expiry_minutes.to_i.minutes.from_now,
         )
 
-        session.participants.create!(
+        initiator_participant = session.participants.create!(
           user_id: current_user.id,
           role: ::InteractiveHeartbeat::Participant::ROLE_INITIATOR,
           accepted_at: Time.zone.now,
           presence_at: Time.zone.now,
           settings: default_participant_settings.merge("accepted_configuration_revision" => 1),
         )
+        initiator_participant.grant_session_permissions!
         session.participants.create!(
           user_id: target.id,
           role: ::InteractiveHeartbeat::Participant::ROLE_INVITEE,
-          settings: default_participant_settings.merge("accepted_configuration_revision" => 1),
+          settings: default_participant_settings.merge("configuration_consent_revoked" => true),
         )
       end
 
@@ -186,6 +190,59 @@ module ::InteractiveHeartbeat
       return render_error("session_closed", status: 422, message: "This invitation is no longer open.") if session.expired? || session.terminal?
 
       session.accept!(participant)
+      touch_presence!(session)
+      render_json(session_payload(session.reload))
+    end
+
+    def join_session
+      session = participant_session!
+      return if performed?
+
+      participant = session.participant_for(current_user)
+      return render_error("session_closed", status: 422, message: "This invitation is no longer open.") if session.expired? || session.terminal?
+
+      ::InteractiveHeartbeat::Session.transaction do
+        session.accept!(participant) unless participant.accepted?
+        participant.reload.grant_session_permissions!(settings: participant_settings_params)
+      end
+      touch_presence!(session)
+      render_json(session_payload(session.reload))
+    rescue ActiveRecord::RecordInvalid => e
+      render_error(
+        "participant_invalid",
+        status: 422,
+        message: e.record.errors.full_messages.join(", ").presence || "The session could not be joined.",
+      )
+    end
+
+    def grant_permissions
+      session = participant_session!
+      return if performed?
+
+      participant = session.participant_for(current_user)
+      return render_error("accept_required", status: 422, message: "Join the session before allowing it.") unless participant&.accepted?
+      return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
+
+      participant.grant_session_permissions!(settings: participant_settings_params)
+      touch_presence!(session)
+      render_json(session_payload(session.reload))
+    rescue ActiveRecord::RecordInvalid => e
+      render_error(
+        "participant_invalid",
+        status: 422,
+        message: e.record.errors.full_messages.join(", ").presence || "Your session permissions could not be saved.",
+      )
+    end
+
+    def revoke_permissions
+      session = participant_session!
+      return if performed?
+
+      participant = session.participant_for(current_user)
+      return render_error("accept_required", status: 422, message: "Join the session before changing permissions.") unless participant&.accepted?
+      return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
+
+      participant.revoke_session_permissions!
       touch_presence!(session)
       render_json(session_payload(session.reload))
     end
@@ -329,6 +386,23 @@ module ::InteractiveHeartbeat
       render_error("lovense_unavailable", status: 502, message: e.message)
     end
 
+    def test_lab_signal
+      render_json(
+        ::InteractiveHeartbeat::TestLabSignal.for(
+          user: current_user,
+          parameters: test_lab_signal_params,
+        ),
+      )
+    end
+
+    def test_lab_lovense_token
+      render_json(::InteractiveHeartbeat::LovenseClient.authorization_payload(current_user))
+    rescue ::InteractiveHeartbeat::LovenseClient::ConfigurationError => e
+      render_error("lovense_not_configured", status: 503, message: e.message)
+    rescue ::InteractiveHeartbeat::LovenseClient::ProviderError => e
+      render_error("lovense_unavailable", status: 502, message: e.message)
+    end
+
     private
 
     def ensure_enabled
@@ -337,6 +411,11 @@ module ::InteractiveHeartbeat
 
     def ensure_allowed
       raise Discourse::InvalidAccess unless self.class.allowed_user?(current_user)
+    end
+
+    def ensure_test_lab_admin
+      raise Discourse::NotFound unless SiteSetting.interactive_heartbeat_test_lab_enabled
+      raise Discourse::NotFound unless current_user&.admin?
     end
 
     def enforce_request_rate_limit
@@ -427,6 +506,9 @@ module ::InteractiveHeartbeat
         ready: participant.ready?,
         present: participant.present_now?,
         configuration_accepted: participant.configuration_accepted?,
+        permissions_granted: participant.session_permissions_granted?,
+        permission_scope: participant.session_permission_scope? ? "session" : "granular",
+        missing_permissions: participant.missing_session_permissions,
         settings: participant.response_settings_payload,
         needs_heartbeat_consent: heartbeat_source_required?(session, participant),
         needs_toy_consent: toy_target_required?(session, participant),
@@ -497,6 +579,12 @@ module ::InteractiveHeartbeat
         "ramp_down_per_second" => 4,
         "hysteresis_bpm" => 3,
       }
+    end
+
+    def test_lab_signal_params
+      value = params[:test_lab]
+      value = value.to_unsafe_h if value.respond_to?(:to_unsafe_h)
+      value.is_a?(Hash) ? value : {}
     end
 
     def participant_settings_params

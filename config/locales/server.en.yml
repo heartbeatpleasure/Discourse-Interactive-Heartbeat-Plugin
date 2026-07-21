@@ -2,6 +2,7 @@ en:
   site_settings:
     interactive_heartbeat_enabled: "Enable private Interactive Heartbeat sessions. Requires the Heartrate plugin and asynchronous current readings."
     interactive_heartbeat_nav_enabled: "Allow the theme component to show the Interactive Heartbeat navigation item."
+    interactive_heartbeat_test_lab_enabled: "Enable the Interactive Heartbeat Test Lab for administrators only. Non-admin users cannot see or access it."
     interactive_heartbeat_allowed_groups: "Groups allowed to create and participate in Interactive Heartbeat sessions."
     interactive_heartbeat_lovense_developer_token: "Lovense developer token. Kept server-side and only used to request per-user authorization tokens."
     interactive_heartbeat_lovense_platform_name: "Website name configured in the Lovense developer dashboard."

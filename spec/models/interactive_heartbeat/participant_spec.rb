@@ -153,4 +153,67 @@ RSpec.describe InteractiveHeartbeat::Participant do
     expect(participant.pulse_strength).to eq(1)
   end
 
+  it "grants one session-scoped permission covering heartbeat, toy and the current mode" do
+    session = InteractiveHeartbeat::Session.create!(
+      initiator: initiator,
+      invitee: invitee,
+      status: InteractiveHeartbeat::Session::STATUS_SETUP,
+      mode: InteractiveHeartbeat::Session::MODE_CROSS_HEARTBEAT,
+      settings: {
+        "directions" => [InteractiveHeartbeat::Session::DIRECTION_INITIATOR_TO_INVITEE],
+        "configuration_revision" => 2,
+      },
+      expires_at: 1.hour.from_now,
+    )
+    participant = session.participants.create!(
+      user: invitee,
+      role: described_class::ROLE_INVITEE,
+      accepted_at: Time.zone.now,
+    )
+
+    participant.grant_session_permissions!(settings: { "max_intensity" => 9 })
+
+    participant.reload
+    expect(participant.session_permission_scope?).to eq(true)
+    expect(participant.heartbeat_consent?).to eq(true)
+    expect(participant.toy_consent?).to eq(true)
+    expect(participant.configuration_accepted?).to eq(true)
+    expect(participant.max_intensity).to eq(9)
+    expect(participant.session_permissions_granted?).to eq(true)
+  end
+
+  it "revokes all session-scoped permissions and pauses an active session" do
+    session, source, target = active_session
+    source.grant_session_permissions!
+    target.grant_session_permissions!
+    source.update!(ready_at: Time.zone.now)
+    target.update!(ready_at: Time.zone.now)
+    session.update!(status: InteractiveHeartbeat::Session::STATUS_ACTIVE)
+
+    target.revoke_session_permissions!
+
+    expect(session.reload.status).to eq(InteractiveHeartbeat::Session::STATUS_PAUSED)
+    expect(target.reload.session_permission_scope?).to eq(false)
+    expect(target.heartbeat_consent?).to eq(false)
+    expect(target.toy_consent?).to eq(false)
+    expect(target.configuration_accepted?).to eq(false)
+    expect(target.ready?).to eq(false)
+  end
+
+  it "keeps an active session running when the toy owner only changes personal response settings" do
+    session, _source, target = active_session
+
+    target.update_preferences!(
+      heartbeat_consent: false,
+      toy_consent: true,
+      configuration_consent: true,
+      ready: true,
+      settings: target.settings_hash.to_h.merge("max_intensity" => 8),
+    )
+
+    expect(session.reload.status).to eq(InteractiveHeartbeat::Session::STATUS_ACTIVE)
+    expect(target.reload.ready?).to eq(true)
+    expect(target.max_intensity).to eq(8)
+  end
+
 end
