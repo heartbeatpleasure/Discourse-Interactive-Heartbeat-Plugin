@@ -2,7 +2,7 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.2.0
+# version: 0.4.0
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
@@ -46,6 +46,7 @@ after_initialize do
   require_relative "lib/interactive_heartbeat/request_rate_limiter"
   require_relative "lib/interactive_heartbeat/lovense_client"
   require_relative "lib/interactive_heartbeat/lovense_callback_store"
+  require_relative "lib/interactive_heartbeat/intensity_mapper"
   require_relative "lib/interactive_heartbeat/heart_signal"
 
   require_dependency File.expand_path(
@@ -100,6 +101,8 @@ after_initialize do
     put "/interactive-heartbeat/api/sessions/:token/decline" => "interactive_heartbeat/api#decline_session",
         defaults: { format: :json }
     put "/interactive-heartbeat/api/sessions/:token/participant" => "interactive_heartbeat/api#update_participant",
+        defaults: { format: :json }
+    put "/interactive-heartbeat/api/sessions/:token/configuration" => "interactive_heartbeat/api#update_configuration",
         defaults: { format: :json }
     put "/interactive-heartbeat/api/sessions/:token/start" => "interactive_heartbeat/api#start_session",
         defaults: { format: :json }

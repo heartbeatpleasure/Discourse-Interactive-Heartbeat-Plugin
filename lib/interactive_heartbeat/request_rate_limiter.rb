@@ -10,6 +10,7 @@ module ::InteractiveHeartbeat
       "accept_session" => [30, 60],
       "decline_session" => [30, 60],
       "update_participant" => [60, 60],
+      "update_configuration" => [30, 60],
       "start_session" => [30, 60],
       "pause_session" => [30, 60],
       "end_session" => [30, 60],

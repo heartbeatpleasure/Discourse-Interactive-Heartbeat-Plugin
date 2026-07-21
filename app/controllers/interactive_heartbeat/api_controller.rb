@@ -54,34 +54,18 @@ module ::InteractiveHeartbeat
           provider: account&.provider,
           live: heartrate_runtime_ready? && ::LiveMetrics::CurrentStateStore.state_with_reading?(live),
         },
-        defaults: {
-          pulse_strength: bounded_integer(
-            SiteSetting.interactive_heartbeat_default_pulse_strength,
-            1,
-            20,
-            12,
-          ),
-          max_intensity: bounded_integer(
-            SiteSetting.interactive_heartbeat_default_pulse_strength,
-            1,
-            20,
-            12,
-          ),
-          pulse_duration_ms: bounded_integer(
-            SiteSetting.interactive_heartbeat_default_pulse_duration_ms,
-            100,
-            500,
-            180,
-          ),
-          signal_poll_ms: bounded_integer(
+        defaults: default_participant_settings.merge(
+          "signal_poll_ms" => bounded_integer(
             SiteSetting.interactive_heartbeat_signal_poll_ms,
             500,
             5000,
             1000,
           ),
-          signal_unstable_seconds: signal_unstable_seconds,
-          signal_lost_seconds: signal_lost_seconds,
-        },
+          "signal_unstable_seconds" => signal_unstable_seconds,
+          "signal_lost_seconds" => signal_lost_seconds,
+        ),
+        session_modes: ::InteractiveHeartbeat::Session::PUBLIC_MODES,
+        response_modes: ::InteractiveHeartbeat::Participant::RESPONSE_MODES,
       )
     end
 
@@ -152,10 +136,12 @@ module ::InteractiveHeartbeat
           initiator_id: current_user.id,
           invitee_id: target.id,
           status: ::InteractiveHeartbeat::Session::STATUS_INVITED,
-          mode: ::InteractiveHeartbeat::Session::MODE_HEARTBEAT_PULSE,
+          mode: ::InteractiveHeartbeat::Session::MODE_CROSS_HEARTBEAT,
           settings: {
             "directions" => directions,
             "show_exact_bpm" => false,
+            "configuration_revision" => 1,
+            "configuration_proposed_by_id" => current_user.id,
           },
           expires_at: SiteSetting.interactive_heartbeat_invite_expiry_minutes.to_i.minutes.from_now,
         )
@@ -165,12 +151,12 @@ module ::InteractiveHeartbeat
           role: ::InteractiveHeartbeat::Participant::ROLE_INITIATOR,
           accepted_at: Time.zone.now,
           presence_at: Time.zone.now,
-          settings: default_participant_settings,
+          settings: default_participant_settings.merge("accepted_configuration_revision" => 1),
         )
         session.participants.create!(
           user_id: target.id,
           role: ::InteractiveHeartbeat::Participant::ROLE_INVITEE,
-          settings: default_participant_settings,
+          settings: default_participant_settings.merge("accepted_configuration_revision" => 1),
         )
       end
 
@@ -224,6 +210,7 @@ module ::InteractiveHeartbeat
       participant.update_preferences!(
         heartbeat_consent: boolean_param(:heartbeat_consent),
         toy_consent: boolean_param(:toy_consent),
+        configuration_consent: optional_boolean_param(:configuration_consent),
         ready: boolean_param(:ready),
         settings: participant_settings_params,
       )
@@ -234,6 +221,29 @@ module ::InteractiveHeartbeat
         "participant_invalid",
         status: 422,
         message: e.record.errors.full_messages.join(", ").presence || "Your session settings could not be saved.",
+      )
+    end
+
+    def update_configuration
+      session = participant_session!
+      return if performed?
+
+      participant = session.participant_for(current_user)
+      return render_error("accept_required", status: 422, message: "Both participants must accept the session before changing its mode.") unless session.all_accepted?
+      return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
+
+      session.propose_configuration!(
+        participant: participant,
+        requested_mode: params[:mode],
+        requested_leader_user_id: params[:leader_user_id],
+      )
+      touch_presence!(session)
+      render_json(session_payload(session.reload))
+    rescue ActiveRecord::RecordInvalid => e
+      render_error(
+        "configuration_invalid",
+        status: 422,
+        message: e.record.errors.full_messages.join(", ").presence || "The session mode could not be changed.",
       )
     end
 
@@ -256,7 +266,7 @@ module ::InteractiveHeartbeat
       render_error(
         "session_not_ready",
         status: 422,
-        message: "Both participants must be present, accepted, consented and ready before starting.",
+        message: "Both participants must accept the session mode, be present, consented and ready before starting.",
       )
     end
 
@@ -382,8 +392,16 @@ module ::InteractiveHeartbeat
       {
         token: session.token,
         status: session.status,
-        mode: session.mode,
+        mode: session.mode_key,
         directions: session.directions,
+        configuration: {
+          revision: session.configuration_revision,
+          proposed_by_id: session.configuration_proposed_by_id,
+          leader_user_id: session.leader_user_id,
+          leader: session.leader.present? ? user_payload(session.leader) : nil,
+          current_user_accepted: session.configuration_accepted_by?(current_participant),
+          other_user_accepted: session.configuration_accepted_by?(other_participant),
+        },
         expires_at: session.expires_at&.iso8601,
         started_at: session.started_at&.iso8601,
         ended_at: session.ended_at&.iso8601,
@@ -408,11 +426,8 @@ module ::InteractiveHeartbeat
         toy_consent: participant.toy_consent?,
         ready: participant.ready?,
         present: participant.present_now?,
-        settings: {
-          max_intensity: participant.max_intensity,
-          pulse_strength: participant.pulse_strength,
-          pulse_duration_ms: participant.pulse_duration_ms,
-        },
+        configuration_accepted: participant.configuration_accepted?,
+        settings: participant.response_settings_payload,
         needs_heartbeat_consent: heartbeat_source_required?(session, participant),
         needs_toy_consent: toy_target_required?(session, participant),
         heartbeat_ready: heartbeat_source_required?(session, participant) ? heartbeat_ready_for?(participant.user_id) : nil,
@@ -428,17 +443,11 @@ module ::InteractiveHeartbeat
     end
 
     def heartbeat_source_required?(session, participant)
-      (participant.role == ::InteractiveHeartbeat::Participant::ROLE_INITIATOR &&
-        session.directions.include?(::InteractiveHeartbeat::Session::DIRECTION_INITIATOR_TO_INVITEE)) ||
-        (participant.role == ::InteractiveHeartbeat::Participant::ROLE_INVITEE &&
-          session.directions.include?(::InteractiveHeartbeat::Session::DIRECTION_INVITEE_TO_INITIATOR))
+      session.heartbeat_required_for?(participant.user_id)
     end
 
     def toy_target_required?(session, participant)
-      (participant.role == ::InteractiveHeartbeat::Participant::ROLE_INVITEE &&
-        session.directions.include?(::InteractiveHeartbeat::Session::DIRECTION_INITIATOR_TO_INVITEE)) ||
-        (participant.role == ::InteractiveHeartbeat::Participant::ROLE_INITIATOR &&
-          session.directions.include?(::InteractiveHeartbeat::Session::DIRECTION_INVITEE_TO_INITIATOR))
+      session.toy_required_for?(participant.user_id)
     end
 
     def user_payload(user)
@@ -456,25 +465,37 @@ module ::InteractiveHeartbeat
     end
 
     def default_participant_settings
+      maximum = bounded_integer(
+        SiteSetting.interactive_heartbeat_default_pulse_strength,
+        1,
+        20,
+        12,
+      )
       {
-        "max_intensity" => bounded_integer(
-          SiteSetting.interactive_heartbeat_default_pulse_strength,
-          1,
-          20,
-          12,
-        ),
-        "pulse_strength" => bounded_integer(
-          SiteSetting.interactive_heartbeat_default_pulse_strength,
-          1,
-          20,
-          12,
-        ),
+        "response_mode" => ::InteractiveHeartbeat::Participant::RESPONSE_FIXED,
+        "max_intensity" => maximum,
+        "min_intensity" => [3, maximum].min,
+        "pulse_strength" => maximum,
         "pulse_duration_ms" => bounded_integer(
           SiteSetting.interactive_heartbeat_default_pulse_duration_ms,
           100,
           500,
           180,
         ),
+        "zone_low_max_bpm" => 79,
+        "zone_medium_max_bpm" => 99,
+        "zone_high_max_bpm" => 119,
+        "zone_low_intensity" => [3, maximum].min,
+        "zone_medium_intensity" => [8, maximum].min,
+        "zone_high_intensity" => [11, maximum].min,
+        "zone_peak_intensity" => maximum,
+        "smooth_min_bpm" => 70,
+        "smooth_max_bpm" => 130,
+        "baseline_bpm" => 70,
+        "relative_range_bpm" => 50,
+        "ramp_up_per_second" => 2,
+        "ramp_down_per_second" => 4,
+        "hysteresis_bpm" => 3,
       }
     end
 
@@ -486,6 +507,12 @@ module ::InteractiveHeartbeat
 
     def boolean_param(key)
       ActiveModel::Type::Boolean.new.cast(params[key])
+    end
+
+    def optional_boolean_param(key)
+      return nil unless params.key?(key)
+
+      boolean_param(key)
     end
 
     def open_session_count(user_id)
@@ -510,9 +537,7 @@ module ::InteractiveHeartbeat
     def required_heartbeat_sources_ready?(session)
       return false unless heartrate_runtime_ready?
 
-      session.participants.all? do |participant|
-        !heartbeat_source_required?(session, participant) || heartbeat_ready_for?(participant.user_id)
-      end
+      session.required_heartbeat_user_ids.all? { |user_id| heartbeat_ready_for?(user_id) }
     end
 
     def heartbeat_ready_for?(user_id)
