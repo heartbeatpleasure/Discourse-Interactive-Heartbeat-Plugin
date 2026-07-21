@@ -81,6 +81,44 @@ RSpec.describe InteractiveHeartbeat::Session do
     expect(session.target_user_ids).to contain_exactly(initiator.id, invitee.id)
   end
 
+  it "allows an accepted initiator to propose the session mode while the invitation is pending" do
+    session = described_class.create!(
+      initiator: initiator,
+      invitee: invitee,
+      status: described_class::STATUS_INVITED,
+      mode: described_class::MODE_CROSS_HEARTBEAT,
+      settings: {
+        "directions" => [described_class::DIRECTION_INITIATOR_TO_INVITEE],
+        "show_exact_bpm" => false,
+        "configuration_revision" => 1,
+      },
+      expires_at: 1.hour.from_now,
+    )
+    initiator_participant = session.participants.create!(
+      user: initiator,
+      role: InteractiveHeartbeat::Participant::ROLE_INITIATOR,
+      accepted_at: Time.zone.now,
+      presence_at: Time.zone.now,
+    )
+    invitee_participant = session.participants.create!(
+      user: invitee,
+      role: InteractiveHeartbeat::Participant::ROLE_INVITEE,
+    )
+
+    expect do
+      session.propose_configuration!(
+        participant: initiator_participant,
+        requested_mode: described_class::MODE_HEART_SYNC,
+      )
+    end.not_to raise_error
+
+    expect(session.reload.status).to eq(described_class::STATUS_INVITED)
+    expect(session.mode_key).to eq(described_class::MODE_HEART_SYNC)
+    expect(session.configuration_revision).to eq(2)
+    expect(initiator_participant.reload.configuration_accepted?).to eq(true)
+    expect(invitee_participant.reload.configuration_accepted?).to eq(false)
+  end
+
   it "pauses and resets readiness when a participant proposes a new shared mode" do
     session = build_session
     initiator_participant = session.participant_for(initiator)

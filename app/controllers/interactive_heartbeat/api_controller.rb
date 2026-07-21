@@ -229,7 +229,7 @@ module ::InteractiveHeartbeat
       return if performed?
 
       participant = session.participant_for(current_user)
-      return render_error("accept_required", status: 422, message: "Both participants must accept the session before changing its mode.") unless session.all_accepted?
+      return render_error("accept_required", status: 422, message: "Accept the session before changing its mode.") unless participant&.accepted?
       return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
 
       session.propose_configuration!(

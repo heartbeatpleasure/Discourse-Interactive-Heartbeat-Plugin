@@ -276,7 +276,7 @@ module ::InteractiveHeartbeat
       participant = participant_for(participant)
       raise ActiveRecord::RecordInvalid, self unless PUBLIC_MODES.include?(canonical_mode)
       raise ActiveRecord::RecordInvalid, self if participant.blank?
-      raise ActiveRecord::RecordInvalid, self unless all_accepted?
+      raise ActiveRecord::RecordInvalid, self unless participant.accepted?
       raise ActiveRecord::RecordInvalid, self if terminal?
 
       normalized_leader =
