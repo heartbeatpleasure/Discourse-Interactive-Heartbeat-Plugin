@@ -521,14 +521,17 @@ module ::InteractiveHeartbeat
     end
 
     def participant_sessions
-      ::InteractiveHeartbeat::Session
-        .joins(:participants)
-        .where(interactive_heartbeat_participants: { user_id: current_user.id })
-        .distinct
+      ::InteractiveHeartbeat::Session.where(id: participant_session_ids)
     end
 
     def visible_participant_sessions
-      participant_sessions.where(interactive_heartbeat_participants: { dismissed_at: nil })
+      ::InteractiveHeartbeat::Session.where(id: participant_session_ids(visible_only: true))
+    end
+
+    def participant_session_ids(visible_only: false)
+      scope = ::InteractiveHeartbeat::Participant.where(user_id: current_user.id)
+      scope = scope.where(dismissed_at: nil) if visible_only
+      scope.select(:session_id)
     end
 
     def notify_other_participant!(session, event, revision: nil)

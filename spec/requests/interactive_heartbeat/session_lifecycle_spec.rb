@@ -61,7 +61,7 @@ RSpec.describe "Interactive Heartbeat session lifecycle", type: :request do
     sign_in(initiator)
     get "/interactive-heartbeat/api/sessions.json"
 
-    expect(response.status).to eq(200)
+    expect(response.status).to eq(200), response.body
     body = response.parsed_body
     expect(body.dig("history", "total")).to eq(7)
     expect(body.dig("history", "shown")).to eq(5)
@@ -162,4 +162,3 @@ RSpec.describe "Interactive Heartbeat session lifecycle", type: :request do
     expect(accepted).to be_present
   end
 end
-RUB

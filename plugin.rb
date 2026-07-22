@@ -2,7 +2,7 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.8.1
+# version: 0.8.2
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
