@@ -105,13 +105,17 @@ module ::InteractiveHeartbeat
       base = visible_participant_sessions.includes(:initiator, :invitee, participants: :user)
       open_rows = base
         .where(status: ::InteractiveHeartbeat::Session::OPEN_STATUSES)
-        .order(updated_at: :desc)
+        .order(Arel.sql("interactive_heartbeat_sessions.updated_at DESC"))
         .to_a
 
       completed_scope = base
         .where(status: ::InteractiveHeartbeat::Session::TERMINAL_STATUSES)
-        .order(Arel.sql("COALESCE(ended_at, updated_at) DESC"))
-      completed_total = completed_scope.count
+        .order(
+          Arel.sql(
+            "COALESCE(interactive_heartbeat_sessions.ended_at, interactive_heartbeat_sessions.updated_at) DESC",
+          ),
+        )
+      completed_total = completed_scope.except(:order).count
       history_expanded = ActiveModel::Type::Boolean.new.cast(params[:history_all])
       completed_rows = if history_expanded
         completed_scope.to_a
@@ -816,7 +820,10 @@ module ::InteractiveHeartbeat
     end
 
     def ensure_database_ready!
-      ready = ::InteractiveHeartbeat::Session.table_exists? && ::InteractiveHeartbeat::Participant.table_exists?
+      ready =
+        ::InteractiveHeartbeat::Session.table_exists? &&
+          ::InteractiveHeartbeat::Participant.table_exists? &&
+          ::InteractiveHeartbeat::Participant.column_names.include?("dismissed_at")
       return if ready
 
       render_error(
