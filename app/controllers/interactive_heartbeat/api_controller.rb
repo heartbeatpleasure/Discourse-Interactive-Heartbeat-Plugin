@@ -5,7 +5,7 @@ module ::InteractiveHeartbeat
     requires_plugin ::InteractiveHeartbeat::PLUGIN_NAME
 
     USER_SEARCH_LIMIT = 10
-    SESSION_LIST_LIMIT = 30
+    DEFAULT_COMPLETED_SESSION_LIMIT = 5
     MAX_OPEN_SESSIONS_PER_USER = 5
 
     before_action :ensure_enabled
@@ -97,14 +97,65 @@ module ::InteractiveHeartbeat
       ensure_database_ready!
       return if performed?
 
-      rows = participant_sessions
-        .includes(:initiator, :invitee, participants: :user)
+      participant_sessions
+        .where(status: ::InteractiveHeartbeat::Session::STATUS_INVITED)
+        .where("expires_at <= ?", Time.zone.now)
+        .find_each(&:refresh_expiration!)
+
+      base = visible_participant_sessions.includes(:initiator, :invitee, participants: :user)
+      open_rows = base
+        .where(status: ::InteractiveHeartbeat::Session::OPEN_STATUSES)
         .order(updated_at: :desc)
-        .limit(SESSION_LIST_LIMIT)
         .to_a
 
-      rows.each(&:refresh_expiration!)
-      render_json(sessions: rows.map { |session| session_payload(session.reload) })
+      completed_scope = base
+        .where(status: ::InteractiveHeartbeat::Session::TERMINAL_STATUSES)
+        .order(Arel.sql("COALESCE(ended_at, updated_at) DESC"))
+      completed_total = completed_scope.count
+      history_expanded = ActiveModel::Type::Boolean.new.cast(params[:history_all])
+      completed_rows = if history_expanded
+        completed_scope.to_a
+      else
+        completed_scope.limit(DEFAULT_COMPLETED_SESSION_LIMIT).to_a
+      end
+
+      render_json(
+        sessions: (open_rows + completed_rows).map { |session| session_payload(session) },
+        history: {
+          total: completed_total,
+          shown: completed_rows.length,
+          expanded: history_expanded,
+          has_more: completed_total > completed_rows.length,
+          default_limit: DEFAULT_COMPLETED_SESSION_LIMIT,
+        },
+      )
+    end
+
+    def clear_completed_sessions
+      ensure_database_ready!
+      return if performed?
+
+      terminal_sessions = participant_sessions
+        .where(status: ::InteractiveHeartbeat::Session::TERMINAL_STATUSES)
+        .select(:id, :token)
+        .to_a
+      session_ids = terminal_sessions.map(&:id)
+      session_tokens = terminal_sessions.map(&:token)
+
+      cleared = if session_ids.present?
+        ::InteractiveHeartbeat::Participant
+          .where(user_id: current_user.id, session_id: session_ids, dismissed_at: nil)
+          .update_all(dismissed_at: Time.zone.now, updated_at: Time.zone.now)
+      else
+        0
+      end
+
+      ::InteractiveHeartbeat::SessionNotifier.clear_for!(
+        user: current_user,
+        session_tokens: session_tokens,
+      )
+
+      render_json(cleared: cleared)
     end
 
     def create_session
@@ -164,6 +215,13 @@ module ::InteractiveHeartbeat
         )
       end
 
+      ::InteractiveHeartbeat::SessionNotifier.notify!(
+        session: session,
+        recipient: target,
+        actor: current_user,
+        event: "invitation",
+      )
+
       render_json(session_payload(session.reload), status: 201)
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -189,8 +247,10 @@ module ::InteractiveHeartbeat
       participant = session.participant_for(current_user)
       return render_error("session_closed", status: 422, message: "This invitation is no longer open.") if session.expired? || session.terminal?
 
+      was_accepted = participant.accepted?
       session.accept!(participant)
       touch_presence!(session)
+      notify_other_participant!(session, "invitation_accepted") unless was_accepted
       render_json(session_payload(session.reload))
     end
 
@@ -201,11 +261,13 @@ module ::InteractiveHeartbeat
       participant = session.participant_for(current_user)
       return render_error("session_closed", status: 422, message: "This invitation is no longer open.") if session.expired? || session.terminal?
 
+      was_accepted = participant.accepted?
       ::InteractiveHeartbeat::Session.transaction do
         session.accept!(participant) unless participant.accepted?
         participant.reload.grant_session_permissions!(settings: participant_settings_params)
       end
       touch_presence!(session)
+      notify_other_participant!(session, "invitation_accepted") unless was_accepted
       render_json(session_payload(session.reload))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -223,8 +285,16 @@ module ::InteractiveHeartbeat
       return render_error("accept_required", status: 422, message: "Join the session before allowing it.") unless participant&.accepted?
       return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
 
+      previously_accepted_configuration = participant.configuration_accepted?
       participant.grant_session_permissions!(settings: participant_settings_params)
       touch_presence!(session)
+      if !previously_accepted_configuration && participant.reload.configuration_accepted?
+        notify_other_participant!(
+          session.reload,
+          "mode_accepted",
+          revision: session.configuration_revision,
+        )
+      end
       render_json(session_payload(session.reload))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -253,6 +323,7 @@ module ::InteractiveHeartbeat
 
       participant = session.participant_for(current_user)
       session.decline!(participant)
+      notify_other_participant!(session.reload, "session_declined")
       render_json(session_payload(session.reload))
     end
 
@@ -264,6 +335,7 @@ module ::InteractiveHeartbeat
       return render_error("accept_required", status: 422, message: "Accept the session before changing its setup.") unless participant.accepted?
       return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
 
+      was_ready = participant.ready?
       participant.update_preferences!(
         heartbeat_consent: boolean_param(:heartbeat_consent),
         toy_consent: boolean_param(:toy_consent),
@@ -272,7 +344,11 @@ module ::InteractiveHeartbeat
         settings: participant_settings_params,
       )
       touch_presence!(session)
-      render_json(session_payload(session.reload))
+      session.reload
+      if !was_ready && participant.reload.ready? && session.all_ready?
+        notify_other_participant!(session, "both_ready")
+      end
+      render_json(session_payload(session))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
         "participant_invalid",
@@ -289,13 +365,28 @@ module ::InteractiveHeartbeat
       return render_error("accept_required", status: 422, message: "Accept the session before changing its mode.") unless participant&.accepted?
       return render_error("session_closed", status: 422, message: "This session has ended.") if session.terminal?
 
-      session.propose_configuration!(
+      previously_accepted_configuration = participant.configuration_accepted?
+      changed = session.propose_configuration!(
         participant: participant,
         requested_mode: params[:mode],
         requested_leader_user_id: params[:leader_user_id],
       )
       touch_presence!(session)
-      render_json(session_payload(session.reload))
+      session.reload
+      if changed
+        notify_other_participant!(
+          session,
+          "mode_approval",
+          revision: session.configuration_revision,
+        )
+      elsif !previously_accepted_configuration && participant.reload.configuration_accepted?
+        notify_other_participant!(
+          session,
+          "mode_accepted",
+          revision: session.configuration_revision,
+        )
+      end
+      render_json(session_payload(session))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
         "configuration_invalid",
@@ -340,6 +431,7 @@ module ::InteractiveHeartbeat
       return if performed?
 
       session.end!
+      notify_other_participant!(session.reload, "session_ended")
       render_json(session_payload(session.reload))
     end
 
@@ -431,6 +523,23 @@ module ::InteractiveHeartbeat
         .distinct
     end
 
+    def visible_participant_sessions
+      participant_sessions.where(interactive_heartbeat_participants: { dismissed_at: nil })
+    end
+
+    def notify_other_participant!(session, event, revision: nil)
+      recipient = session.other_participant(current_user)&.user
+      return if recipient.blank?
+
+      ::InteractiveHeartbeat::SessionNotifier.notify!(
+        session: session,
+        recipient: recipient,
+        actor: current_user,
+        event: event,
+        revision: revision,
+      )
+    end
+
     def participant_session!
       ensure_database_ready!
       return nil if performed?
@@ -481,9 +590,16 @@ module ::InteractiveHeartbeat
           current_user_accepted: session.configuration_accepted_by?(current_participant),
           other_user_accepted: session.configuration_accepted_by?(other_participant),
         },
+        created_at: session.created_at&.iso8601,
+        updated_at: session.updated_at&.iso8601,
         expires_at: session.expires_at&.iso8601,
         started_at: session.started_at&.iso8601,
         ended_at: session.ended_at&.iso8601,
+        activity_at: session_activity_at(session)&.iso8601,
+        terminal: session.terminal?,
+        can_open: !session.terminal?,
+        can_copy_invite: session.status == ::InteractiveHeartbeat::Session::STATUS_INVITED &&
+          current_participant&.role == ::InteractiveHeartbeat::Participant::ROLE_INITIATOR,
         can_start: session.startable? && required_heartbeat_sources_ready?(session),
         current_user: participant_payload(current_participant, session),
         other_user: participant_payload(other_participant, session),
@@ -491,6 +607,18 @@ module ::InteractiveHeartbeat
         invitee: user_payload(session.invitee),
         invite_url: "#{Discourse.base_url}/interactive-heartbeat/sessions/#{session.token}",
       }
+    end
+
+    def session_activity_at(session)
+      if session.terminal?
+        session.ended_at || session.updated_at
+      elsif session.status == ::InteractiveHeartbeat::Session::STATUS_ACTIVE
+        session.started_at || session.updated_at
+      elsif session.status == ::InteractiveHeartbeat::Session::STATUS_INVITED
+        session.created_at
+      else
+        session.updated_at
+      end
     end
 
     def participant_payload(participant, session)

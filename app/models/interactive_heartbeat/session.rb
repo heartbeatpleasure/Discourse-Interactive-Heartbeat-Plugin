@@ -11,15 +11,9 @@ module ::InteractiveHeartbeat
     STATUS_DECLINED = "declined"
     STATUS_ENDED = "ended"
     STATUS_EXPIRED = "expired"
-    STATUSES = [
-      STATUS_INVITED,
-      STATUS_SETUP,
-      STATUS_ACTIVE,
-      STATUS_PAUSED,
-      STATUS_DECLINED,
-      STATUS_ENDED,
-      STATUS_EXPIRED,
-    ].freeze
+    OPEN_STATUSES = [STATUS_INVITED, STATUS_SETUP, STATUS_ACTIVE, STATUS_PAUSED].freeze
+    TERMINAL_STATUSES = [STATUS_DECLINED, STATUS_ENDED, STATUS_EXPIRED].freeze
+    STATUSES = (OPEN_STATUSES + TERMINAL_STATUSES).freeze
 
     LEGACY_MODE_HEARTBEAT_PULSE = "heartbeat_pulse"
     MODE_HEARTBEAT_PULSE = LEGACY_MODE_HEARTBEAT_PULSE
@@ -81,7 +75,8 @@ module ::InteractiveHeartbeat
     validate :valid_directions
     validate :valid_leader
 
-    scope :open, -> { where(status: [STATUS_INVITED, STATUS_SETUP, STATUS_ACTIVE, STATUS_PAUSED]) }
+    scope :open, -> { where(status: OPEN_STATUSES) }
+    scope :terminal, -> { where(status: TERMINAL_STATUSES) }
 
     before_validation :ensure_token, on: :create
     before_validation :normalize_settings

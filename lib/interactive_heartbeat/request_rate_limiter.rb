@@ -5,6 +5,7 @@ module ::InteractiveHeartbeat
     LIMITS = {
       "users" => [30, 60],
       "sessions" => [60, 60],
+      "clear_completed_sessions" => [10, 300],
       "create_session" => [10, 300],
       "show_session" => [120, 60],
       "accept_session" => [30, 60],

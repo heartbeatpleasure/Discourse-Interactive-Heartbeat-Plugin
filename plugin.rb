@@ -2,7 +2,7 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.6.0
+# version: 0.8.0
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
@@ -27,6 +27,8 @@ module ::InteractiveHeartbeat
 end
 
 after_initialize do
+  ::Notification.types[:interactive_heartbeat] = 8800
+
   Rails.application.config.filter_parameters |= %i[
     token
     authToken
@@ -49,6 +51,7 @@ after_initialize do
   require_relative "lib/interactive_heartbeat/intensity_mapper"
   require_relative "lib/interactive_heartbeat/heart_signal"
   require_relative "lib/interactive_heartbeat/test_lab_signal"
+  require_relative "lib/interactive_heartbeat/session_notifier"
 
   require_dependency File.expand_path(
     "app/models/interactive_heartbeat/session.rb",
@@ -94,6 +97,9 @@ after_initialize do
         defaults: { format: :json }
     get "/interactive-heartbeat/api/sessions" => "interactive_heartbeat/api#sessions",
         defaults: { format: :json }
+    delete "/interactive-heartbeat/api/sessions/completed" =>
+             "interactive_heartbeat/api#clear_completed_sessions",
+           defaults: { format: :json }
     post "/interactive-heartbeat/api/sessions" => "interactive_heartbeat/api#create_session",
          defaults: { format: :json }
     get "/interactive-heartbeat/api/sessions/:token" => "interactive_heartbeat/api#show_session",
