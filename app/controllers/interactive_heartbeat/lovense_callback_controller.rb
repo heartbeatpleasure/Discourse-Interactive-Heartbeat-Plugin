@@ -8,14 +8,19 @@ module ::InteractiveHeartbeat
     skip_before_action :verify_authenticity_token, raise: false
     skip_before_action :redirect_to_login_if_required, raise: false
 
+    MAX_CALLBACK_BYTES = 64 * 1024
+    CALLBACK_UID_PATTERN = /\A[1-9][0-9]{0,19}\z/
+    CALLBACK_TOKEN_PATTERN = /\A[0-9a-f]{64}\z/i
+
     before_action :ensure_enabled
+    before_action :enforce_callback_request_limits
 
     def create
       uid = params[:uid].to_s
       utoken = params[:utoken].to_s
 
-      if uid.blank? || utoken.blank?
-        log_rejected("missing_credentials", uid)
+      unless CALLBACK_UID_PATTERN.match?(uid) && CALLBACK_TOKEN_PATTERN.match?(utoken)
+        log_rejected("invalid_credentials", uid)
         return render_callback_error("invalid_callback", status: 422)
       end
 
@@ -63,6 +68,22 @@ module ::InteractiveHeartbeat
 
     def ensure_enabled
       raise Discourse::NotFound unless SiteSetting.interactive_heartbeat_enabled
+    end
+
+    def enforce_callback_request_limits
+      declared_bytes = request.content_length.to_i
+      actual_bytes = request.raw_post.to_s.bytesize
+      if declared_bytes > MAX_CALLBACK_BYTES || actual_bytes > MAX_CALLBACK_BYTES
+        render_callback_error("payload_too_large", status: 413)
+        return
+      end
+
+      ::InteractiveHeartbeat::RequestRateLimiter.perform_lovense_callback!(
+        uid: params[:uid],
+        ip: request.remote_ip,
+      )
+    rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
+      render_callback_error("rate_limited", status: 429)
     end
 
     def callback_payload

@@ -108,4 +108,48 @@ RSpec.describe "Interactive Heartbeat permissions and Test Lab", type: :request 
     expect(response.parsed_body.dig("control", "tempo_bpm")).to eq(100)
     expect(response.parsed_body.dig("pulse", "desired_strength")).to eq(8)
   end
+  it "drops unexpected participant and Test Lab parameters" do
+    session = invited_session
+    sign_in(invitee)
+
+    put "/interactive-heartbeat/api/sessions/#{session.token}/join",
+        params: {
+          settings: {
+            max_intensity: 9,
+            injected_admin: true,
+            permission_scope: "forged",
+          },
+        },
+        as: :json
+
+    expect(response.status).to eq(200)
+    stored = session.participant_for(invitee).reload.settings
+    expect(stored["max_intensity"]).to eq(9)
+    expect(stored).not_to have_key("injected_admin")
+    expect(stored["permission_scope"]).to eq("session")
+
+    sign_in(admin)
+    post "/interactive-heartbeat/api/test-lab/signal",
+         params: {
+           test_lab: {
+             source_a_kind: "simulated",
+             source_a_bpm: 75,
+             source_b_kind: "simulated",
+             source_b_bpm: 95,
+             mode: "cross_heartbeat",
+             unexpected_source: "ignored",
+             settings: {
+               response_mode: "fixed",
+               pulse_strength: 8,
+               max_intensity: 12,
+               injected_admin: true,
+             },
+           },
+         },
+         as: :json
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["active"]).to eq(true)
+  end
+
 end

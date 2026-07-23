@@ -5,7 +5,40 @@ module ::InteractiveHeartbeat
     requires_plugin ::InteractiveHeartbeat::PLUGIN_NAME
 
     USER_SEARCH_LIMIT = 10
+    MAX_USER_SEARCH_LENGTH = 100
+    MAX_USERNAME_PARAMETER_LENGTH = 100
     DEFAULT_COMPLETED_SESSION_LIMIT = 5
+    MAX_COMPLETED_SESSION_HISTORY = 100
+    SESSION_TOKEN_PATTERN = /\A[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/i
+    PARTICIPANT_SETTING_KEYS = %i[
+      response_mode
+      max_intensity
+      min_intensity
+      pulse_strength
+      pulse_duration_ms
+      zone_low_max_bpm
+      zone_medium_max_bpm
+      zone_high_max_bpm
+      zone_low_intensity
+      zone_medium_intensity
+      zone_high_intensity
+      zone_peak_intensity
+      smooth_min_bpm
+      smooth_max_bpm
+      baseline_bpm
+      relative_range_bpm
+      ramp_up_per_second
+      ramp_down_per_second
+      hysteresis_bpm
+    ].freeze
+    TEST_LAB_PARAMETER_KEYS = %i[
+      source_a_kind
+      source_a_bpm
+      source_b_kind
+      source_b_bpm
+      mode
+      leader_source
+    ].freeze
 
     before_action :ensure_enabled
     before_action :ensure_logged_in
@@ -79,15 +112,26 @@ module ::InteractiveHeartbeat
     def users
       query = params[:q].to_s.strip
       return render_json(users: []) if query.length < 2
+      if query.length > MAX_USER_SEARCH_LENGTH
+        return render_error(
+          "search_query_too_long",
+          status: 422,
+          message: "The member search is too long.",
+        )
+      end
 
       escaped = ActiveRecord::Base.sanitize_sql_like(query.downcase)
-      candidates = ::User
-        .where(active: true, staged: false)
-        .where.not(id: current_user.id)
-        .where(
-          "username_lower LIKE :query OR LOWER(COALESCE(name, '')) LIKE :query",
-          query: "%#{escaped}%",
-        )
+      candidates = ::User.where(active: true, staged: false).where.not(id: current_user.id)
+      candidates =
+        if SiteSetting.enable_names?
+          candidates.where(
+            "username_lower LIKE :query OR LOWER(COALESCE(name, '')) LIKE :query",
+            query: "%#{escaped}%",
+          )
+        else
+          candidates.where("username_lower LIKE :query", query: "%#{escaped}%")
+        end
+      candidates = candidates
         .order(:username_lower)
         .limit(USER_SEARCH_LIMIT * 3)
         .to_a
@@ -144,7 +188,7 @@ module ::InteractiveHeartbeat
         )
       end
 
-      target = ::User.find_by(username_lower: params[:username].to_s.downcase.strip)
+      target = ::User.find_by(username_lower: normalized_username_param)
       if target.blank?
         return render_error(
           "user_not_found",
@@ -240,11 +284,8 @@ module ::InteractiveHeartbeat
         )
       completed_total = completed_scope.except(:order).count
       history_expanded = ActiveModel::Type::Boolean.new.cast(params[:history_all])
-      completed_rows = if history_expanded
-        completed_scope.to_a
-      else
-        completed_scope.limit(DEFAULT_COMPLETED_SESSION_LIMIT).to_a
-      end
+      completed_limit = history_expanded ? MAX_COMPLETED_SESSION_HISTORY : DEFAULT_COMPLETED_SESSION_LIMIT
+      completed_rows = completed_scope.limit(completed_limit).to_a
 
       render_json(
         sessions: (open_rows + completed_rows).map { |session| session_payload(session) },
@@ -253,7 +294,9 @@ module ::InteractiveHeartbeat
           shown: completed_rows.length,
           expanded: history_expanded,
           has_more: completed_total > completed_rows.length,
+          truncated: history_expanded && completed_total > completed_rows.length,
           default_limit: DEFAULT_COMPLETED_SESSION_LIMIT,
+          max_expanded: MAX_COMPLETED_SESSION_HISTORY,
         },
       )
     end
@@ -289,7 +332,7 @@ module ::InteractiveHeartbeat
       ensure_database_ready!
       return if performed?
 
-      target = ::User.find_by(username_lower: params[:username].to_s.downcase.strip)
+      target = ::User.find_by(username_lower: normalized_username_param)
       return render_error("user_not_found", status: 404, message: "The selected member could not be found.") if target.blank?
       return render_error("invalid_participant", status: 422, message: "You cannot invite yourself.") if target.id == current_user.id
       return render_error("participant_not_allowed", status: 403, message: "This member cannot use Interactive Heartbeat.") unless self.class.allowed_user?(target)
@@ -297,113 +340,119 @@ module ::InteractiveHeartbeat
       directions = normalized_directions(params[:directions])
       return render_error("invalid_directions", status: 422, message: "Select at least one heartbeat direction.") if directions.blank?
 
-      existing = open_pair_session(current_user.id, target.id)
-      if existing.present?
-        existing.refresh_expiration!
-        existing.reload
-        unless existing.terminal?
-          if existing.status == ::InteractiveHeartbeat::Session::STATUS_INVITED &&
-               !::InteractiveHeartbeat::InvitationPolicy.allowed?(
+      pair_ids = [current_user.id, target.id].sort
+      DistributedMutex.synchronize(
+        "interactive_heartbeat:create_session:#{pair_ids.join(":")}",
+        validity: 15.seconds,
+      ) do
+        existing = open_pair_session(current_user.id, target.id)
+        if existing.present?
+          existing.refresh_expiration!
+          existing.reload
+          unless existing.terminal?
+            if existing.status == ::InteractiveHeartbeat::Session::STATUS_INVITED &&
+                 !::InteractiveHeartbeat::InvitationPolicy.allowed?(
+                   sender: current_user,
+                   recipient: target,
+                 )
+              ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
+                recipient: target,
+              )
+              return render_error(
+                "invitation_not_accepted",
+                status: 422,
+                message: "This member is not accepting Interactive Heartbeat invitations.",
+              )
+            end
+            return render_json(session_payload(existing), status: 200)
+          end
+        end
+  
+        unless ::InteractiveHeartbeat::InvitationPolicy.allowed?(
                  sender: current_user,
                  recipient: target,
                )
-            ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
-              recipient: target,
-            )
-            return render_error(
-              "invitation_not_accepted",
-              status: 422,
-              message: "This member is not accepting Interactive Heartbeat invitations.",
-            )
-          end
-          return render_json(session_payload(existing), status: 200)
+          return render_error(
+            "invitation_not_accepted",
+            status: 422,
+            message: "This member is not accepting Interactive Heartbeat invitations.",
+          )
         end
+  
+        if invitation_cooldown_active?(current_user.id, target.id)
+          return render_error(
+            "invitation_cooldown",
+            status: 422,
+            message: "This member is not accepting a new Interactive Heartbeat invitation yet.",
+          )
+        end
+  
+        maximum_open = max_open_sessions_per_user
+        if open_session_count(current_user.id) >= maximum_open
+          return render_error(
+            "too_many_open_sessions",
+            status: 422,
+            message: "End or decline an existing session before creating another one.",
+          )
+        end
+        if open_session_count(target.id) >= maximum_open
+          return render_error(
+            "recipient_unavailable",
+            status: 422,
+            message: "This member is not accepting a new Interactive Heartbeat invitation right now.",
+          )
+        end
+  
+        begin
+          ::InteractiveHeartbeat::RequestRateLimiter.perform_invite_creation!(current_user)
+        rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
+          return render_error(
+            "invite_daily_limit",
+            status: 429,
+            message: "You have reached today's Interactive Heartbeat invitation limit.",
+          )
+        end
+  
+        session = nil
+        ::InteractiveHeartbeat::Session.transaction do
+          session = ::InteractiveHeartbeat::Session.create!(
+            initiator_id: current_user.id,
+            invitee_id: target.id,
+            status: ::InteractiveHeartbeat::Session::STATUS_INVITED,
+            mode: ::InteractiveHeartbeat::Session::MODE_CROSS_HEARTBEAT,
+            settings: {
+              "directions" => directions,
+              "show_exact_bpm" => false,
+              "configuration_revision" => 1,
+              "configuration_proposed_by_id" => current_user.id,
+            },
+            expires_at: SiteSetting.interactive_heartbeat_invite_expiry_minutes.to_i.minutes.from_now,
+          )
+  
+          initiator_participant = session.participants.create!(
+            user_id: current_user.id,
+            role: ::InteractiveHeartbeat::Participant::ROLE_INITIATOR,
+            accepted_at: Time.zone.now,
+            presence_at: Time.zone.now,
+            settings: default_participant_settings.merge("accepted_configuration_revision" => 1),
+          )
+          initiator_participant.grant_session_permissions!
+          session.participants.create!(
+            user_id: target.id,
+            role: ::InteractiveHeartbeat::Participant::ROLE_INVITEE,
+            settings: default_participant_settings.merge("configuration_consent_revoked" => true),
+          )
+        end
+  
+        ::InteractiveHeartbeat::SessionNotifier.notify!(
+          session: session,
+          recipient: target,
+          actor: current_user,
+          event: "invitation",
+        )
+  
+        render_json(session_payload(session.reload), status: 201)
       end
-
-      unless ::InteractiveHeartbeat::InvitationPolicy.allowed?(
-               sender: current_user,
-               recipient: target,
-             )
-        return render_error(
-          "invitation_not_accepted",
-          status: 422,
-          message: "This member is not accepting Interactive Heartbeat invitations.",
-        )
-      end
-
-      if invitation_cooldown_active?(current_user.id, target.id)
-        return render_error(
-          "invitation_cooldown",
-          status: 422,
-          message: "This member is not accepting a new Interactive Heartbeat invitation yet.",
-        )
-      end
-
-      maximum_open = max_open_sessions_per_user
-      if open_session_count(current_user.id) >= maximum_open
-        return render_error(
-          "too_many_open_sessions",
-          status: 422,
-          message: "End or decline an existing session before creating another one.",
-        )
-      end
-      if open_session_count(target.id) >= maximum_open
-        return render_error(
-          "recipient_unavailable",
-          status: 422,
-          message: "This member is not accepting a new Interactive Heartbeat invitation right now.",
-        )
-      end
-
-      begin
-        ::InteractiveHeartbeat::RequestRateLimiter.perform_invite_creation!(current_user)
-      rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
-        return render_error(
-          "invite_daily_limit",
-          status: 429,
-          message: "You have reached today's Interactive Heartbeat invitation limit.",
-        )
-      end
-
-      session = nil
-      ::InteractiveHeartbeat::Session.transaction do
-        session = ::InteractiveHeartbeat::Session.create!(
-          initiator_id: current_user.id,
-          invitee_id: target.id,
-          status: ::InteractiveHeartbeat::Session::STATUS_INVITED,
-          mode: ::InteractiveHeartbeat::Session::MODE_CROSS_HEARTBEAT,
-          settings: {
-            "directions" => directions,
-            "show_exact_bpm" => false,
-            "configuration_revision" => 1,
-            "configuration_proposed_by_id" => current_user.id,
-          },
-          expires_at: SiteSetting.interactive_heartbeat_invite_expiry_minutes.to_i.minutes.from_now,
-        )
-
-        initiator_participant = session.participants.create!(
-          user_id: current_user.id,
-          role: ::InteractiveHeartbeat::Participant::ROLE_INITIATOR,
-          accepted_at: Time.zone.now,
-          presence_at: Time.zone.now,
-          settings: default_participant_settings.merge("accepted_configuration_revision" => 1),
-        )
-        initiator_participant.grant_session_permissions!
-        session.participants.create!(
-          user_id: target.id,
-          role: ::InteractiveHeartbeat::Participant::ROLE_INVITEE,
-          settings: default_participant_settings.merge("configuration_consent_revoked" => true),
-        )
-      end
-
-      ::InteractiveHeartbeat::SessionNotifier.notify!(
-        session: session,
-        recipient: target,
-        actor: current_user,
-        event: "invitation",
-      )
-
-      render_json(session_payload(session.reload), status: 201)
     rescue ActiveRecord::RecordInvalid => e
       render_error(
         "session_invalid",
@@ -728,9 +777,15 @@ module ::InteractiveHeartbeat
       ensure_database_ready!
       return nil if performed?
 
+      token = normalized_session_token(params[:token])
+      unless token
+        render_error("session_not_found", status: 404, message: "This private session could not be found.")
+        return nil
+      end
+
       session = participant_sessions
         .includes(:initiator, :invitee, participants: :user)
-        .find_by(token: params[:token].to_s)
+        .find_by(token: token)
       return session if session.present?
 
       render_error("session_not_found", status: 404, message: "This private session could not be found.")
@@ -741,7 +796,12 @@ module ::InteractiveHeartbeat
       ensure_database_ready!
       return nil if performed?
 
-      token = params[:session_token].to_s
+      token = normalized_session_token(params[:session_token])
+      unless token
+        render_error("session_not_found", status: 404, message: "This private session could not be found.")
+        return nil
+      end
+
       session = participant_sessions
         .includes(:initiator, :invitee, participants: :user)
         .find_by(token: token)
@@ -848,14 +908,27 @@ module ::InteractiveHeartbeat
       {
         id: user.id,
         username: user.username,
-        name: user.name,
+        name: SiteSetting.enable_names? ? user.name : nil,
         avatar_template: user.avatar_template,
         profile_url: "/u/#{user.username}",
       }
     end
 
+    def normalized_username_param
+      params[:username].to_s.downcase.strip.slice(0, MAX_USERNAME_PARAMETER_LENGTH)
+    end
+
+    def normalized_session_token(value)
+      token = value.to_s
+      SESSION_TOKEN_PATTERN.match?(token) ? token : nil
+    end
+
     def normalized_directions(value)
-      Array(value).map(&:to_s).select { |direction| ::InteractiveHeartbeat::Session::DIRECTIONS.include?(direction) }.uniq
+      Array(value)
+        .first(4)
+        .map(&:to_s)
+        .select { |direction| ::InteractiveHeartbeat::Session::DIRECTIONS.include?(direction) }
+        .uniq
     end
 
     def default_participant_settings
@@ -895,14 +968,16 @@ module ::InteractiveHeartbeat
 
     def test_lab_signal_params
       value = params[:test_lab]
-      value = value.to_unsafe_h if value.respond_to?(:to_unsafe_h)
-      value.is_a?(Hash) ? value : {}
+      return {} unless value.respond_to?(:permit)
+
+      value.permit(*TEST_LAB_PARAMETER_KEYS, settings: PARTICIPANT_SETTING_KEYS).to_h
     end
 
     def participant_settings_params
       value = params[:settings]
-      value = value.to_unsafe_h if value.respond_to?(:to_unsafe_h)
-      value.is_a?(Hash) ? value : {}
+      return {} unless value.respond_to?(:permit)
+
+      value.permit(*PARTICIPANT_SETTING_KEYS).to_h
     end
 
     def boolean_param(key)

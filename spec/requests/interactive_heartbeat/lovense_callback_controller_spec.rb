@@ -50,7 +50,7 @@ RSpec.describe "Interactive Heartbeat Lovense callback", type: :request do
 
   it "rejects a callback with an invalid verification token" do
     post "/interactive-heartbeat/lovense/callback",
-         params: callback_payload(utoken: "invalid"),
+         params: callback_payload(utoken: "0" * 64),
          as: :json
 
     expect(response.status).to eq(403)
@@ -72,4 +72,26 @@ RSpec.describe "Interactive Heartbeat Lovense callback", type: :request do
       "code" => "invalid_callback",
     )
   end
+  it "rejects oversized callback payloads before processing toy data" do
+    post "/interactive-heartbeat/lovense/callback",
+         params: callback_payload(toys: { "toy-id" => { status: 1, padding: "x" * 70_000 } }),
+         as: :json
+
+    expect(response.status).to eq(413)
+    expect(response.parsed_body).to eq(
+      "result" => false,
+      "code" => "payload_too_large",
+    )
+    expect(InteractiveHeartbeat::LovenseCallbackStore.read(user)).to be_nil
+  end
+
+  it "rejects malformed callback identifiers without querying a user" do
+    post "/interactive-heartbeat/lovense/callback",
+         params: callback_payload(uid: "1 OR 1=1"),
+         as: :json
+
+    expect(response.status).to eq(422)
+    expect(response.parsed_body["code"]).to eq("invalid_callback")
+  end
+
 end

@@ -9,6 +9,8 @@ module ::InteractiveHeartbeat
     DEFAULT_TTL_SECONDS = 60
     MIN_TTL_SECONDS = 20
     MAX_TTL_SECONDS = 300
+    MAX_TOYS = 50
+    MAX_TOYS_JSON_BYTES = 32 * 1024
 
     class << self
       def write(user:, payload:)
@@ -98,6 +100,8 @@ module ::InteractiveHeartbeat
       def normalized_toys(value)
         parsed =
           if value.is_a?(String)
+            return {} if value.bytesize > MAX_TOYS_JSON_BYTES
+
             JSON.parse(value)
           elsif value.respond_to?(:to_unsafe_h)
             value.to_unsafe_h
@@ -107,7 +111,9 @@ module ::InteractiveHeartbeat
             {}
           end
 
-        parsed.is_a?(Hash) ? parsed : {}
+        return {} unless parsed.is_a?(Hash)
+
+        parsed.first(MAX_TOYS).to_h
       rescue JSON::ParserError, TypeError
         {}
       end

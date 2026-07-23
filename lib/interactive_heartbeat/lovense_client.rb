@@ -9,6 +9,7 @@ module ::InteractiveHeartbeat
     TOKEN_URL = URI("https://api.lovense-api.com/api/basicApi/getToken")
     OPEN_TIMEOUT = 5
     READ_TIMEOUT = 10
+    MAX_RESPONSE_BYTES = 64 * 1024
 
     class ConfigurationError < StandardError
     end
@@ -80,7 +81,17 @@ module ::InteractiveHeartbeat
           raise ProviderError, "Lovense authorization request failed."
         end
 
-        parsed = JSON.parse(response.body.to_s)
+        declared_length = response["Content-Length"].to_i
+        if declared_length > MAX_RESPONSE_BYTES
+          raise ProviderError, "Lovense returned an unexpectedly large response."
+        end
+
+        response_body = response.body.to_s
+        if response_body.bytesize > MAX_RESPONSE_BYTES
+          raise ProviderError, "Lovense returned an unexpectedly large response."
+        end
+
+        parsed = JSON.parse(response_body)
         unless parsed["code"].to_i.zero?
           raise ProviderError, parsed["message"].presence || "Lovense rejected the authorization request."
         end

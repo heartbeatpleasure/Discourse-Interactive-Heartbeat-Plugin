@@ -161,4 +161,34 @@ RSpec.describe "Interactive Heartbeat session lifecycle", type: :request do
       .detect { |notification| JSON.parse(notification.data)["event"] == "invitation_accepted" }
     expect(accepted).to be_present
   end
+  it "bounds expanded completed history responses" do
+    stub_const("InteractiveHeartbeat::ApiController::MAX_COMPLETED_SESSION_HISTORY", 3)
+    5.times do |index|
+      time = (index + 1).minutes.ago
+      create_session(
+        status: InteractiveHeartbeat::Session::STATUS_ENDED,
+        ended_at: time,
+        updated_at: time,
+        index: index,
+      )
+    end
+
+    sign_in(initiator)
+    get "/interactive-heartbeat/api/sessions.json", params: { history_all: true }
+
+    expect(response.status).to eq(200)
+    expect(response.parsed_body.dig("history", "total")).to eq(5)
+    expect(response.parsed_body.dig("history", "shown")).to eq(3)
+    expect(response.parsed_body.dig("history", "truncated")).to eq(true)
+    expect(response.parsed_body.dig("history", "max_expanded")).to eq(3)
+  end
+
+  it "rejects malformed session tokens without exposing session data" do
+    sign_in(initiator)
+    get "/interactive-heartbeat/api/sessions/not-a-valid-session-token.json"
+
+    expect(response.status).to eq(404)
+    expect(response.parsed_body["error"]).to eq("session_not_found")
+  end
+
 end

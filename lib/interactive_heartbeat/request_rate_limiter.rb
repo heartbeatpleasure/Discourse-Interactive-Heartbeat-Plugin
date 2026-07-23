@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "digest"
+
 module ::InteractiveHeartbeat
   class RequestRateLimiter
     LIMITS = {
@@ -47,6 +49,19 @@ module ::InteractiveHeartbeat
         )
       end
 
+      def perform_lovense_callback!(uid:, ip:)
+        ip_key = Digest::SHA256.hexdigest(ip.to_s)[0, 24]
+        increment_or_raise!("lovense_callback_ip", ip_key, 120, 60)
+
+        user_id = Integer(uid, exception: false)
+        increment_or_raise!("lovense_callback_uid", user_id, 30, 60) if user_id&.positive?
+      rescue Redis::BaseError => e
+        Rails.logger.warn(
+          "[interactive_heartbeat] callback_rate_limit_redis_failed " \
+          "error=#{e.class}",
+        )
+      end
+
       def perform_invite_creation!(user)
         max = SiteSetting.interactive_heartbeat_invites_per_day.to_i
         return if max <= 0
@@ -61,6 +76,16 @@ module ::InteractiveHeartbeat
           "[interactive_heartbeat] invite_daily_limit_redis_failed " \
           "user_id=#{user&.id} error=#{e.class}",
         )
+      end
+
+      private
+
+      def increment_or_raise!(scope, identifier, max, period)
+        bucket = Time.now.to_i / period
+        key = "interactive_heartbeat:rate:v1:#{scope}:#{identifier}:#{bucket}"
+        count = Discourse.redis.incr(key)
+        Discourse.redis.expire(key, period + 5) if count == 1
+        raise LimitExceeded if count > max
       end
     end
   end

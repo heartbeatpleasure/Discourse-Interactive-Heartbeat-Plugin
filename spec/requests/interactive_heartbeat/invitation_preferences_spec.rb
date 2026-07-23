@@ -136,4 +136,28 @@ RSpec.describe "Interactive Heartbeat invitation preferences", type: :request do
     expect(response.status).to eq(422)
     expect(response.parsed_body["error"]).to eq("invitation_cooldown")
   end
+  it "does not search or expose full names when Discourse names are disabled" do
+    recipient.update!(name: "Private Display Name")
+    SiteSetting.enable_names = false
+    sign_in(sender)
+
+    get "/interactive-heartbeat/api/users.json", params: { q: "Private Display" }
+    expect(response.status).to eq(200)
+    expect(response.parsed_body["users"]).to be_empty
+
+    get "/interactive-heartbeat/api/users.json", params: { q: recipient.username[0, 3] }
+    expect(response.status).to eq(200)
+    user = response.parsed_body["users"].find { |row| row["username"] == recipient.username }
+    expect(user).to be_present
+    expect(user["name"]).to be_nil
+  end
+
+  it "rejects unreasonably long member searches" do
+    sign_in(sender)
+    get "/interactive-heartbeat/api/users.json", params: { q: "x" * 101 }
+
+    expect(response.status).to eq(422)
+    expect(response.parsed_body["error"]).to eq("search_query_too_long")
+  end
+
 end

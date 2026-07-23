@@ -29,7 +29,6 @@ module ::InteractiveHeartbeat
           session_token: session.token,
           url: "/interactive-heartbeat/sessions/#{session.token}",
           display_username: actor.username,
-          actor_name: actor.name,
           mode: session.mode_key,
           revision: revision,
         }.compact
