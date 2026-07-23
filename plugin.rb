@@ -2,7 +2,7 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.8.2
+# version: 0.9.0
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
@@ -52,6 +52,7 @@ after_initialize do
   require_relative "lib/interactive_heartbeat/heart_signal"
   require_relative "lib/interactive_heartbeat/test_lab_signal"
   require_relative "lib/interactive_heartbeat/session_notifier"
+  require_relative "lib/interactive_heartbeat/invitation_policy"
 
   require_dependency File.expand_path(
     "app/models/interactive_heartbeat/session.rb",
@@ -59,6 +60,18 @@ after_initialize do
   )
   require_dependency File.expand_path(
     "app/models/interactive_heartbeat/participant.rb",
+    __dir__,
+  )
+  require_dependency File.expand_path(
+    "app/models/interactive_heartbeat/invitation_preference.rb",
+    __dir__,
+  )
+  require_dependency File.expand_path(
+    "app/models/interactive_heartbeat/invitation_member.rb",
+    __dir__,
+  )
+  require_dependency File.expand_path(
+    "app/jobs/scheduled/interactive_heartbeat/cleanup.rb",
     __dir__,
   )
   require_dependency File.expand_path(
@@ -95,6 +108,18 @@ after_initialize do
         defaults: { format: :json }
     get "/interactive-heartbeat/api/users" => "interactive_heartbeat/api#users",
         defaults: { format: :json }
+    get "/interactive-heartbeat/api/invitation-preferences" =>
+          "interactive_heartbeat/api#invitation_preferences",
+        defaults: { format: :json }
+    put "/interactive-heartbeat/api/invitation-preferences" =>
+          "interactive_heartbeat/api#update_invitation_preferences",
+        defaults: { format: :json }
+    post "/interactive-heartbeat/api/invitation-preferences/members" =>
+           "interactive_heartbeat/api#add_invitation_member",
+         defaults: { format: :json }
+    delete "/interactive-heartbeat/api/invitation-preferences/members/:user_id" =>
+             "interactive_heartbeat/api#remove_invitation_member",
+           defaults: { format: :json }
     get "/interactive-heartbeat/api/sessions" => "interactive_heartbeat/api#sessions",
         defaults: { format: :json }
     delete "/interactive-heartbeat/api/sessions/completed" =>

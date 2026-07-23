@@ -21,6 +21,7 @@ module ::InteractiveHeartbeat
         return if recipient.blank? || actor.blank? || recipient.id == actor.id
         return unless EVENTS.include?(event.to_s)
         return unless recipient.active? && !recipient.staged?
+        return if recipient.ignored_user_ids.include?(actor.id)
 
         event = event.to_s
         data = {
@@ -59,6 +60,24 @@ module ::InteractiveHeartbeat
           "error=#{e.class}",
         )
         nil
+      end
+
+      def clear_all_for!(session_tokens:)
+        tokens = Array(session_tokens).map(&:to_s).reject(&:blank?).uniq
+        return 0 if tokens.blank?
+
+        scope = ::Notification.where(
+          notification_type: ::Notification.types.fetch(NOTIFICATION_TYPE),
+        ).where("data::json ->> 'session_token' IN (:tokens)", tokens: tokens)
+        user_ids = scope.distinct.pluck(:user_id)
+        deleted = scope.delete_all
+        ::User.where(id: user_ids).find_each(&:publish_notifications_state) if deleted.positive?
+        deleted
+      rescue => e
+        Rails.logger.warn(
+          "[interactive_heartbeat] notification_global_cleanup_failed error=#{e.class}",
+        )
+        0
       end
 
       def clear_for!(user:, session_tokens:)

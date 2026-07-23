@@ -6,7 +6,6 @@ module ::InteractiveHeartbeat
 
     USER_SEARCH_LIMIT = 10
     DEFAULT_COMPLETED_SESSION_LIMIT = 5
-    MAX_OPEN_SESSIONS_PER_USER = 5
 
     before_action :ensure_enabled
     before_action :ensure_logged_in
@@ -69,6 +68,11 @@ module ::InteractiveHeartbeat
         response_modes: ::InteractiveHeartbeat::Participant::RESPONSE_MODES,
         test_lab_enabled: SiteSetting.interactive_heartbeat_test_lab_enabled && current_user.admin?,
         test_lab_url: "/interactive-heartbeat/test-lab",
+        invitation_preferences: {
+          available_modes: ::InteractiveHeartbeat::InvitationPreference.available_modes,
+          allow_nobody: SiteSetting.interactive_heartbeat_allow_nobody_invitation_preference,
+          max_list_members: SiteSetting.interactive_heartbeat_max_invitation_list_members.to_i,
+        },
       )
     end
 
@@ -91,6 +95,125 @@ module ::InteractiveHeartbeat
         .first(USER_SEARCH_LIMIT)
 
       render_json(users: candidates.map { |user| user_payload(user) })
+    end
+
+    def invitation_preferences
+      ensure_database_ready!
+      return if performed?
+
+      render_json(invitation_preferences_payload)
+    end
+
+    def update_invitation_preferences
+      ensure_database_ready!
+      return if performed?
+
+      preference = ::InteractiveHeartbeat::InvitationPreference.update_mode!(
+        user: current_user,
+        mode: params[:mode],
+      )
+      cancelled = ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
+        recipient: current_user,
+      )
+      render_json(
+        invitation_preferences_payload.merge(
+          mode: preference.mode,
+          cancelled_invitations: cancelled,
+        ),
+      )
+    rescue ActiveRecord::RecordInvalid => e
+      render_error(
+        "invitation_preference_invalid",
+        status: 422,
+        message:
+          e.record.errors.full_messages.join(", ").presence ||
+            "Your invitation preference could not be saved.",
+      )
+    end
+
+    def add_invitation_member
+      ensure_database_ready!
+      return if performed?
+
+      kind = params[:kind].to_s
+      unless ::InteractiveHeartbeat::InvitationMember::KINDS.include?(kind)
+        return render_error(
+          "invalid_invitation_member_kind",
+          status: 422,
+          message: "Choose a valid invitation list.",
+        )
+      end
+
+      target = ::User.find_by(username_lower: params[:username].to_s.downcase.strip)
+      if target.blank?
+        return render_error(
+          "user_not_found",
+          status: 404,
+          message: "The selected member could not be found.",
+        )
+      end
+      if target.id == current_user.id
+        return render_error(
+          "invalid_participant",
+          status: 422,
+          message: "You cannot add your own account.",
+        )
+      end
+      unless self.class.allowed_user?(target)
+        return render_error(
+          "participant_not_allowed",
+          status: 403,
+          message: "This member cannot use Interactive Heartbeat.",
+        )
+      end
+
+      existing = ::InteractiveHeartbeat::InvitationMember.find_by(
+        owner_user_id: current_user.id,
+        member_user_id: target.id,
+      )
+      if existing.blank? && invitation_member_count >= invitation_member_limit
+        return render_error(
+          "invitation_list_full",
+          status: 422,
+          message: "Your invitation lists have reached the administrator's limit.",
+        )
+      end
+
+      ::InteractiveHeartbeat::InvitationMember.set!(
+        owner: current_user,
+        member: target,
+        kind: kind,
+      )
+      cancelled = if kind == ::InteractiveHeartbeat::InvitationMember::KIND_BLOCKED
+        ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
+          recipient: current_user,
+        )
+      else
+        0
+      end
+      render_json(invitation_preferences_payload.merge(cancelled_invitations: cancelled))
+    rescue ActiveRecord::RecordInvalid => e
+      render_error(
+        "invitation_member_invalid",
+        status: 422,
+        message:
+          e.record.errors.full_messages.join(", ").presence ||
+            "The member could not be added.",
+      )
+    end
+
+    def remove_invitation_member
+      ensure_database_ready!
+      return if performed?
+
+      kind = params[:kind].to_s
+      scope = ::InteractiveHeartbeat::InvitationMember.where(
+        owner_user_id: current_user.id,
+        member_user_id: params[:user_id].to_i,
+      )
+      scope = scope.where(kind: kind) if ::InteractiveHeartbeat::InvitationMember::KINDS.include?(kind)
+      removed = scope.delete_all
+      render_json(invitation_preferences_payload.merge(removed: removed))
     end
 
     def sessions
@@ -174,18 +297,72 @@ module ::InteractiveHeartbeat
       directions = normalized_directions(params[:directions])
       return render_error("invalid_directions", status: 422, message: "Select at least one heartbeat direction.") if directions.blank?
 
-      if open_session_count(current_user.id) >= MAX_OPEN_SESSIONS_PER_USER
+      existing = open_pair_session(current_user.id, target.id)
+      if existing.present?
+        existing.refresh_expiration!
+        existing.reload
+        unless existing.terminal?
+          if existing.status == ::InteractiveHeartbeat::Session::STATUS_INVITED &&
+               !::InteractiveHeartbeat::InvitationPolicy.allowed?(
+                 sender: current_user,
+                 recipient: target,
+               )
+            ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
+              recipient: target,
+            )
+            return render_error(
+              "invitation_not_accepted",
+              status: 422,
+              message: "This member is not accepting Interactive Heartbeat invitations.",
+            )
+          end
+          return render_json(session_payload(existing), status: 200)
+        end
+      end
+
+      unless ::InteractiveHeartbeat::InvitationPolicy.allowed?(
+               sender: current_user,
+               recipient: target,
+             )
+        return render_error(
+          "invitation_not_accepted",
+          status: 422,
+          message: "This member is not accepting Interactive Heartbeat invitations.",
+        )
+      end
+
+      if invitation_cooldown_active?(current_user.id, target.id)
+        return render_error(
+          "invitation_cooldown",
+          status: 422,
+          message: "This member is not accepting a new Interactive Heartbeat invitation yet.",
+        )
+      end
+
+      maximum_open = max_open_sessions_per_user
+      if open_session_count(current_user.id) >= maximum_open
         return render_error(
           "too_many_open_sessions",
           status: 422,
           message: "End or decline an existing session before creating another one.",
         )
       end
+      if open_session_count(target.id) >= maximum_open
+        return render_error(
+          "recipient_unavailable",
+          status: 422,
+          message: "This member is not accepting a new Interactive Heartbeat invitation right now.",
+        )
+      end
 
-      existing = open_pair_session(current_user.id, target.id)
-      if existing.present?
-        existing.refresh_expiration!
-        return render_json(session_payload(existing.reload), status: 200) unless existing.terminal?
+      begin
+        ::InteractiveHeartbeat::RequestRateLimiter.perform_invite_creation!(current_user)
+      rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
+        return render_error(
+          "invite_daily_limit",
+          status: 429,
+          message: "You have reached today's Interactive Heartbeat invitation limit.",
+        )
       end
 
       session = nil
@@ -738,6 +915,71 @@ module ::InteractiveHeartbeat
       boolean_param(key)
     end
 
+    def invitation_preferences_payload
+      preference = ::InteractiveHeartbeat::InvitationPreference.find_by(user_id: current_user.id)
+      members = ::InteractiveHeartbeat::InvitationMember
+        .where(owner_user_id: current_user.id)
+        .includes(:member_user)
+        .to_a
+        .sort_by { |row| row.member_user.username_lower }
+
+      current_mode =
+        preference&.mode.presence ||
+          ::InteractiveHeartbeat::InvitationPreference::MODE_ALL_MEMBERS
+      available_modes = ::InteractiveHeartbeat::InvitationPreference.available_modes
+      available_modes << current_mode unless available_modes.include?(current_mode)
+
+      {
+        mode: current_mode,
+        available_modes: available_modes,
+        approved_members: members
+          .select { |row| row.kind == ::InteractiveHeartbeat::InvitationMember::KIND_APPROVED }
+          .map { |row| user_payload(row.member_user) },
+        blocked_members: members
+          .select { |row| row.kind == ::InteractiveHeartbeat::InvitationMember::KIND_BLOCKED }
+          .map { |row| user_payload(row.member_user) },
+        max_list_members: invitation_member_limit,
+      }
+    end
+
+    def invitation_member_count
+      ::InteractiveHeartbeat::InvitationMember.where(owner_user_id: current_user.id).count
+    end
+
+    def invitation_member_limit
+      bounded_integer(
+        SiteSetting.interactive_heartbeat_max_invitation_list_members,
+        10,
+        500,
+        100,
+      )
+    end
+
+    def max_open_sessions_per_user
+      bounded_integer(
+        SiteSetting.interactive_heartbeat_max_open_sessions_per_user,
+        1,
+        20,
+        5,
+      )
+    end
+
+    def invitation_cooldown_active?(first_user_id, second_user_id)
+      minutes = SiteSetting.interactive_heartbeat_declined_invite_cooldown_minutes.to_i
+      return false if minutes <= 0
+
+      ::InteractiveHeartbeat::Session
+        .where(status: ::InteractiveHeartbeat::Session::STATUS_DECLINED)
+        .where(
+          "(initiator_id = :first AND invitee_id = :second) OR " \
+          "(initiator_id = :second AND invitee_id = :first)",
+          first: first_user_id,
+          second: second_user_id,
+        )
+        .where("ended_at >= ?", minutes.minutes.ago)
+        .exists?
+    end
+
     def open_session_count(user_id)
       ::InteractiveHeartbeat::Session.open
         .where("initiator_id = :id OR invitee_id = :id", id: user_id)
@@ -826,7 +1068,9 @@ module ::InteractiveHeartbeat
       ready =
         ::InteractiveHeartbeat::Session.table_exists? &&
           ::InteractiveHeartbeat::Participant.table_exists? &&
-          ::InteractiveHeartbeat::Participant.column_names.include?("dismissed_at")
+          ::InteractiveHeartbeat::Participant.column_names.include?("dismissed_at") &&
+          ::InteractiveHeartbeat::InvitationPreference.table_exists? &&
+          ::InteractiveHeartbeat::InvitationMember.table_exists?
       return if ready
 
       render_error(

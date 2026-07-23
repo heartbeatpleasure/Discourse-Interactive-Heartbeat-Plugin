@@ -49,6 +49,45 @@ plugins:
     max: 1440
     client: false
 
+  interactive_heartbeat_allow_nobody_invitation_preference:
+    default: false
+    client: false
+
+  interactive_heartbeat_max_open_sessions_per_user:
+    default: 5
+    type: integer
+    min: 1
+    max: 20
+    client: false
+
+  interactive_heartbeat_declined_invite_cooldown_minutes:
+    default: 60
+    type: integer
+    min: 0
+    max: 1440
+    client: false
+
+  interactive_heartbeat_invites_per_day:
+    default: 20
+    type: integer
+    min: 0
+    max: 100
+    client: false
+
+  interactive_heartbeat_max_invitation_list_members:
+    default: 100
+    type: integer
+    min: 10
+    max: 500
+    client: false
+
+  interactive_heartbeat_completed_session_retention_days:
+    default: 180
+    type: integer
+    min: 0
+    max: 3650
+    client: false
+
   interactive_heartbeat_presence_timeout_seconds:
     default: 20
     type: integer
