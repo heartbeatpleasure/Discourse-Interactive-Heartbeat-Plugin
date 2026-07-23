@@ -1,0 +1,244 @@
+en:
+  admin_js:
+    admin:
+      interactive_heartbeat:
+        title: "Interactive Heartbeat"
+        description: "Admin tools for private heartbeat sessions, Lovense control, consent, and invitation safety."
+        open_settings: "Open settings"
+        overview_title: "Admin tools"
+        overview_description: "Manage configuration, review privacy-safe health, and inspect recent bounded operational events."
+        settings_description: "Configure access, Lovense integration, session limits, invitation controls, signal timing, and retention."
+        open_tool: "Open tool"
+        category_configuration: "Configuration"
+        category_monitoring: "Monitoring"
+
+        health:
+          title: "Interactive Heartbeat health"
+          short_title: "Health"
+          description: "Review dependencies, database readiness, aggregate session state, Lovense callback activity, configuration, and privacy-safe retention."
+          back_to_overview: "Back to overview"
+          refresh: "Refresh"
+          refreshing: "Refreshing…"
+          loading: "Loading Interactive Heartbeat health…"
+          load_error: "Interactive Heartbeat health could not be loaded. Check the browser console and Rails logs."
+          last_checked: "Last checked: %{time}"
+          not_available: "Not available"
+          enabled: "Enabled"
+          disabled: "Disabled"
+          configured: "Configured"
+          not_configured: "Not configured"
+          ready: "Ready"
+          incomplete: "Incomplete"
+          "yes": "Yes"
+          "no": "No"
+          status_title: "Operational status"
+          status_description: "Warnings are generated from aggregate system state only. No usernames, session tokens, toy identifiers, or heartbeat values are included."
+          no_warnings: "No operational warnings were detected in the current health snapshot."
+          sessions_title: "Session lifecycle"
+          sessions_description: "Aggregate counts for private sessions. Participant identities and session tokens are intentionally omitted."
+          dependencies_title: "Dependencies and database"
+          dependencies_description: "Readiness of the Heartrate dependency, async current readings, Lovense configuration, and required database structures."
+          configuration_title: "Configuration"
+          configuration_description: "Read-only operational values. Secrets, allowed-group names, external endpoints, and credentials are not exposed here."
+          privacy_title: "Privacy and retention"
+          privacy_description: "Confirmation of the limited diagnostic and heartbeat data model used by Interactive Heartbeat."
+
+          overall:
+            healthy:
+              label: "Healthy"
+              description: "Required dependencies and database structures are available and no operational warning is active."
+            attention:
+              label: "Attention needed"
+              description: "The plugin is available, but one or more conditions should be reviewed."
+            critical:
+              label: "Critical"
+              description: "A required dependency, migration, or configuration is preventing normal operation."
+            inactive:
+              label: "Inactive"
+              description: "Interactive Heartbeat is disabled, so sessions and Lovense control are not expected to run."
+
+          cards:
+            open_sessions: "Open sessions"
+            open_sessions_detail: "%{active} active, %{paused} paused"
+            lovense: "Lovense integration"
+            lovense_detail: "%{success} accepted callbacks and %{rejected} rejected in the last hour"
+            database: "Database"
+            database_detail: "%{sessions} session rows, %{participants} participant rows"
+            events: "Operational events"
+            events_detail: "%{warnings} warning(s), %{errors} error(s) in the last 24 hours"
+
+          sessions:
+            invited: "Invited"
+            setup: "Setup"
+            active: "Active"
+            paused: "Paused"
+            ended: "Ended"
+            declined: "Declined"
+            expired: "Expired"
+            terminal_last_24h: "Completed in the last 24 hours"
+            stale_active: "Active sessions with stale presence"
+
+          dependencies:
+            heartrate_available: "Heartrate runtime available"
+            heartrate_enabled: "Heartrate plugin enabled"
+            async_readings: "Async current readings"
+            database: "Interactive Heartbeat database"
+            lovense: "Lovense server configuration"
+
+          configuration:
+            plugin: "Interactive Heartbeat plugin"
+            navigation: "Navigation item"
+            test_lab: "Admin Test Lab"
+            allowed_groups: "Configured allowed groups"
+            lovense_app: "Lovense app type"
+            callback_ttl: "Lovense callback state TTL"
+            invite_expiry: "Invitation expiry"
+            allow_nobody: "Allow Nobody invitation preference"
+            max_open: "Maximum open sessions per member"
+            decline_cooldown: "Cooldown after declined invitation"
+            invites_per_day: "Daily invitation limit"
+            max_invitation_list: "Maximum approved/blocked members"
+            retention: "Completed-session retention"
+            presence_timeout: "Presence timeout"
+            signal_unstable: "Delayed-signal threshold"
+            signal_stale: "Hard signal-loss threshold"
+            signal_poll: "Signal refresh interval"
+
+          privacy:
+            heartbeat_history: "Historical heartbeat storage"
+            heartbeat_history_detail: "Interactive Heartbeat consumes current readings from Heartrate and does not create its own BPM history series."
+            callback_state: "Lovense callback state"
+            latest_only: "Latest-only Redis state"
+            callback_state_detail: "Only the latest sanitized app/toy availability state is retained, with a hard TTL of %{seconds} seconds."
+            event_log: "Admin operational event log"
+            metadata_only: "Bounded metadata only"
+            event_log_detail: "Up to %{max} privacy-safe event codes are retained for at most %{days} days. No usernames, session tokens, toy identifiers, or heartbeat values are stored."
+
+          warnings:
+            plugin_disabled:
+              title: "Interactive Heartbeat is disabled"
+              description: "The plugin is disabled, so sessions and Lovense control are not expected to run."
+            database_not_ready:
+              title: "Database migrations are incomplete"
+              description: "One or more required Interactive Heartbeat tables or columns are unavailable. Run a full rebuild and review migration output."
+            heartrate_dependency_missing:
+              title: "Heartrate dependency is unavailable"
+              description: "Interactive Heartbeat requires the Heartrate plugin runtime to obtain current heartbeat readings."
+            heartrate_dependency_disabled:
+              title: "Heartrate is disabled"
+              description: "The Heartrate plugin is present but disabled. Interactive Heartbeat cannot start sessions that require live readings."
+            async_current_readings_disabled:
+              title: "Async current readings are disabled"
+              description: "Interactive Heartbeat requires the Heartrate async current-reading path. Enable it in the Heartrate settings."
+            lovense_not_configured:
+              title: "Lovense is not configured"
+              description: "The server-side Lovense developer token or platform configuration is incomplete. Sessions can be created, but toy connection cannot succeed."
+            stale_active_sessions:
+              title: "Active sessions have stale presence"
+              description: "%{count} active session(s) no longer have fresh presence from both participants and should pause automatically."
+            recent_operational_errors:
+              title: "Recent operational errors were recorded"
+              description: "%{count} privacy-safe error event(s) were recorded in the last 24 hours. Review the Events page."
+            retention_disabled:
+              title: "Completed-session retention is unlimited"
+              description: "Automatic deletion of ended, declined, and expired sessions is disabled. This may be intentional, but should be reviewed periodically."
+            health_unavailable:
+              title: "Health summary is unavailable"
+              description: "The health snapshot could not be generated. Review Rails logs for the underlying error."
+
+        events:
+          title: "Interactive Heartbeat events"
+          short_title: "Events"
+          description: "Review recent privacy-safe session, consent, Lovense, security, and cleanup events without participant or heartbeat data."
+          back_to_overview: "Back to overview"
+          refresh: "Refresh"
+          refreshing: "Refreshing…"
+          loading: "Loading Interactive Heartbeat events…"
+          load_error: "Interactive Heartbeat events could not be loaded. Check the browser console and Rails logs."
+          last_checked: "Last checked: %{time}"
+          not_available: "Not available"
+          recent_title: "Recent operational events"
+          recent_description: "Only bounded event codes, results, severity, time, and broad client context are retained. Usernames, user IDs, session tokens, toy identifiers, credentials, and heartbeat values are never stored here."
+          category_filter: "Category"
+          severity_filter: "Severity"
+          all_categories: "All categories"
+          all_severities: "All severities"
+          no_events: "No events match the current filters."
+          retention: "Retention: up to %{days} days and %{max} events"
+          total: "%{count} event(s) currently retained"
+
+          columns:
+            time: "Time"
+            severity: "Severity"
+            category: "Category"
+            event: "Event"
+            result: "Result"
+            client: "Client context"
+
+          categories:
+            session: "Session"
+            invitation: "Invitation"
+            consent: "Consent"
+            lovense: "Lovense"
+            security: "Security"
+            cleanup: "Cleanup"
+            system: "System"
+
+          severities:
+            info: "Info"
+            warning: "Warning"
+            error: "Error"
+
+          event_names:
+            invitation_create: "Invitation creation"
+            invitation_accept: "Invitation acceptance"
+            invitation_decline: "Invitation decline"
+            invitation_preference: "Invitation preference"
+            invitation_member: "Invitation list member"
+            session_start: "Session start"
+            session_pause: "Session pause"
+            session_end: "Session end"
+            completed_history_clear: "Completed history clear"
+            permission_grant: "Session permission grant"
+            permission_revoke: "Session permission revoke"
+            configuration_update: "Mode configuration update"
+            lovense_token: "Lovense authorization token"
+            lovense_callback: "Lovense callback"
+            request_rate_limit: "Request rate limit"
+            cleanup: "Retention cleanup"
+            unknown: "Unknown event"
+
+          results:
+            success: "Successful"
+            created: "Created"
+            accepted: "Accepted"
+            declined: "Declined"
+            updated: "Updated"
+            added: "Added"
+            removed: "Removed"
+            started: "Started"
+            paused: "Paused"
+            ended: "Ended"
+            cleared: "Cleared"
+            granted: "Granted"
+            revoked: "Revoked"
+            proposed: "Proposed"
+            no_change: "No change"
+            blocked: "Blocked by policy"
+            limit_reached: "Limit reached"
+            not_configured: "Not configured"
+            provider_error: "Provider error"
+            rejected: "Rejected"
+            rate_limited: "Rate limited"
+            invalid: "Invalid request"
+            payload_too_large: "Payload too large"
+            temporarily_unavailable: "Temporarily unavailable"
+            failed: "Failed"
+            unknown: "Unknown result"
+
+          client_contexts:
+            desktop_browser: "Desktop browser"
+            mobile_browser: "Mobile browser"
+            embedded_webview: "Embedded webview"
+            server: "Server process"
+            unknown: "Unknown"

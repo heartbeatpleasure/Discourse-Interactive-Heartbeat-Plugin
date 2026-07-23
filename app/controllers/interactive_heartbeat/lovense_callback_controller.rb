@@ -21,6 +21,7 @@ module ::InteractiveHeartbeat
 
       unless CALLBACK_UID_PATTERN.match?(uid) && CALLBACK_TOKEN_PATTERN.match?(utoken)
         log_rejected("invalid_credentials", uid)
+        record_callback_event(result: :invalid, severity: :warning)
         return render_callback_error("invalid_callback", status: 422)
       end
 
@@ -31,6 +32,7 @@ module ::InteractiveHeartbeat
 
       unless user.present? && ::InteractiveHeartbeat::ApiController.allowed_user?(user)
         log_rejected("verification_failed", uid)
+        record_callback_event(result: :rejected, severity: :warning)
         return render_callback_error("invalid_callback", status: 403)
       end
 
@@ -44,6 +46,7 @@ module ::InteractiveHeartbeat
           "[interactive_heartbeat] lovense_callback_store_unavailable " \
           "user_id=#{user.id}",
         )
+        record_callback_event(result: :temporarily_unavailable, severity: :error)
         return render_callback_error("temporarily_unavailable", status: 503)
       end
 
@@ -55,6 +58,7 @@ module ::InteractiveHeartbeat
         "online_toy_count=#{state[:online_toy_count].to_i}",
       )
 
+      record_callback_event(result: :success)
       render json: { result: true }, status: :ok
     rescue => e
       Rails.logger.error(
@@ -74,6 +78,7 @@ module ::InteractiveHeartbeat
       declared_bytes = request.content_length.to_i
       actual_bytes = request.raw_post.to_s.bytesize
       if declared_bytes > MAX_CALLBACK_BYTES || actual_bytes > MAX_CALLBACK_BYTES
+        record_callback_event(result: :payload_too_large, severity: :warning)
         render_callback_error("payload_too_large", status: 413)
         return
       end
@@ -83,7 +88,18 @@ module ::InteractiveHeartbeat
         ip: request.remote_ip,
       )
     rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
+      record_callback_event(result: :rate_limited, severity: :warning)
       render_callback_error("rate_limited", status: 429)
+    end
+
+    def record_callback_event(result:, severity: :info)
+      ::InteractiveHeartbeat::AdminEventLog.record(
+        category: :lovense,
+        event: :lovense_callback,
+        result: result,
+        severity: severity,
+        client_context: :server,
+      )
     end
 
     def callback_payload

@@ -2,10 +2,12 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.9.1
+# version: 0.9.2
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
+
+add_admin_route "admin.interactive_heartbeat.title", "interactiveHeartbeat"
 
 enabled_site_setting :interactive_heartbeat_enabled
 
@@ -53,6 +55,8 @@ after_initialize do
   require_relative "lib/interactive_heartbeat/test_lab_signal"
   require_relative "lib/interactive_heartbeat/session_notifier"
   require_relative "lib/interactive_heartbeat/invitation_policy"
+  require_relative "lib/interactive_heartbeat/admin_event_log"
+  require_relative "lib/interactive_heartbeat/admin_health"
 
   require_dependency File.expand_path(
     "app/models/interactive_heartbeat/session.rb",
@@ -86,6 +90,14 @@ after_initialize do
     "app/controllers/interactive_heartbeat/lovense_callback_controller.rb",
     __dir__,
   )
+  require_dependency File.expand_path(
+    "app/controllers/interactive_heartbeat/admin_health_controller.rb",
+    __dir__,
+  )
+  require_dependency File.expand_path(
+    "app/controllers/interactive_heartbeat/admin_events_controller.rb",
+    __dir__,
+  )
 
   add_model_callback(::User, :before_destroy) do
     ::InteractiveHeartbeat::Session.where(initiator_id: id).or(
@@ -100,6 +112,13 @@ after_initialize do
   end
 
   Discourse::Application.routes.append do
+    get "/admin/plugins/interactive-heartbeat/health.json" =>
+          "interactive_heartbeat/admin_health#index",
+        defaults: { format: :json }
+    get "/admin/plugins/interactive-heartbeat/events.json" =>
+          "interactive_heartbeat/admin_events#index",
+        defaults: { format: :json }
+
     get "/interactive-heartbeat" => "interactive_heartbeat/page#index"
     get "/interactive-heartbeat/sessions/:token" => "interactive_heartbeat/page#index"
     get "/interactive-heartbeat/test-lab" => "interactive_heartbeat/page#test_lab"

@@ -159,6 +159,11 @@ module ::InteractiveHeartbeat
       cancelled = ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
         recipient: current_user,
       )
+      record_admin_event(
+        category: :invitation,
+        event: :invitation_preference,
+        result: :updated,
+      )
       render_json(
         invitation_preferences_payload.merge(
           mode: preference.mode,
@@ -235,6 +240,11 @@ module ::InteractiveHeartbeat
       else
         0
       end
+      record_admin_event(
+        category: :invitation,
+        event: :invitation_member,
+        result: :added,
+      )
       render_json(invitation_preferences_payload.merge(cancelled_invitations: cancelled))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -257,6 +267,11 @@ module ::InteractiveHeartbeat
       )
       scope = scope.where(kind: kind) if ::InteractiveHeartbeat::InvitationMember::KINDS.include?(kind)
       removed = scope.delete_all
+      record_admin_event(
+        category: :invitation,
+        event: :invitation_member,
+        result: removed.positive? ? :removed : :no_change,
+      )
       render_json(invitation_preferences_payload.merge(removed: removed))
     end
 
@@ -325,6 +340,11 @@ module ::InteractiveHeartbeat
         session_tokens: session_tokens,
       )
 
+      record_admin_event(
+        category: :session,
+        event: :completed_history_clear,
+        result: cleared.positive? ? :cleared : :no_change,
+      )
       render_json(cleared: cleared)
     end
 
@@ -358,6 +378,12 @@ module ::InteractiveHeartbeat
               ::InteractiveHeartbeat::InvitationPolicy.cancel_disallowed_pending_invitations!(
                 recipient: target,
               )
+              record_admin_event(
+                category: :invitation,
+                event: :invitation_create,
+                result: :blocked,
+                severity: :warning,
+              )
               return render_error(
                 "invitation_not_accepted",
                 status: 422,
@@ -372,6 +398,12 @@ module ::InteractiveHeartbeat
                  sender: current_user,
                  recipient: target,
                )
+          record_admin_event(
+            category: :invitation,
+            event: :invitation_create,
+            result: :blocked,
+            severity: :warning,
+          )
           return render_error(
             "invitation_not_accepted",
             status: 422,
@@ -380,6 +412,12 @@ module ::InteractiveHeartbeat
         end
   
         if invitation_cooldown_active?(current_user.id, target.id)
+          record_admin_event(
+            category: :security,
+            event: :invitation_create,
+            result: :limit_reached,
+            severity: :warning,
+          )
           return render_error(
             "invitation_cooldown",
             status: 422,
@@ -389,6 +427,12 @@ module ::InteractiveHeartbeat
   
         maximum_open = max_open_sessions_per_user
         if open_session_count(current_user.id) >= maximum_open
+          record_admin_event(
+            category: :security,
+            event: :invitation_create,
+            result: :limit_reached,
+            severity: :warning,
+          )
           return render_error(
             "too_many_open_sessions",
             status: 422,
@@ -396,6 +440,12 @@ module ::InteractiveHeartbeat
           )
         end
         if open_session_count(target.id) >= maximum_open
+          record_admin_event(
+            category: :security,
+            event: :invitation_create,
+            result: :limit_reached,
+            severity: :warning,
+          )
           return render_error(
             "recipient_unavailable",
             status: 422,
@@ -406,6 +456,12 @@ module ::InteractiveHeartbeat
         begin
           ::InteractiveHeartbeat::RequestRateLimiter.perform_invite_creation!(current_user)
         rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
+          record_admin_event(
+            category: :security,
+            event: :invitation_create,
+            result: :limit_reached,
+            severity: :warning,
+          )
           return render_error(
             "invite_daily_limit",
             status: 429,
@@ -450,10 +506,21 @@ module ::InteractiveHeartbeat
           actor: current_user,
           event: "invitation",
         )
-  
+
+        record_admin_event(
+          category: :invitation,
+          event: :invitation_create,
+          result: :created,
+        )
         render_json(session_payload(session.reload), status: 201)
       end
     rescue ActiveRecord::RecordInvalid => e
+      record_admin_event(
+        category: :session,
+        event: :invitation_create,
+        result: :failed,
+        severity: :error,
+      )
       render_error(
         "session_invalid",
         status: 422,
@@ -481,6 +548,11 @@ module ::InteractiveHeartbeat
       session.accept!(participant)
       touch_presence!(session)
       notify_other_participant!(session, "invitation_accepted") unless was_accepted
+      record_admin_event(
+        category: :invitation,
+        event: :invitation_accept,
+        result: was_accepted ? :no_change : :accepted,
+      )
       render_json(session_payload(session.reload))
     end
 
@@ -498,6 +570,16 @@ module ::InteractiveHeartbeat
       end
       touch_presence!(session)
       notify_other_participant!(session, "invitation_accepted") unless was_accepted
+      record_admin_event(
+        category: :invitation,
+        event: :invitation_accept,
+        result: was_accepted ? :no_change : :accepted,
+      )
+      record_admin_event(
+        category: :consent,
+        event: :permission_grant,
+        result: :granted,
+      )
       render_json(session_payload(session.reload))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -525,6 +607,11 @@ module ::InteractiveHeartbeat
           revision: session.configuration_revision,
         )
       end
+      record_admin_event(
+        category: :consent,
+        event: :permission_grant,
+        result: :granted,
+      )
       render_json(session_payload(session.reload))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -544,6 +631,11 @@ module ::InteractiveHeartbeat
 
       participant.revoke_session_permissions!
       touch_presence!(session)
+      record_admin_event(
+        category: :consent,
+        event: :permission_revoke,
+        result: :revoked,
+      )
       render_json(session_payload(session.reload))
     end
 
@@ -554,6 +646,11 @@ module ::InteractiveHeartbeat
       participant = session.participant_for(current_user)
       session.decline!(participant)
       notify_other_participant!(session.reload, "session_declined")
+      record_admin_event(
+        category: :invitation,
+        event: :invitation_decline,
+        result: :declined,
+      )
       render_json(session_payload(session.reload))
     end
 
@@ -616,6 +713,11 @@ module ::InteractiveHeartbeat
           revision: session.configuration_revision,
         )
       end
+      record_admin_event(
+        category: :consent,
+        event: :configuration_update,
+        result: changed ? :proposed : :accepted,
+      )
       render_json(session_payload(session))
     rescue ActiveRecord::RecordInvalid => e
       render_error(
@@ -639,6 +741,11 @@ module ::InteractiveHeartbeat
         )
       end
       session.start!
+      record_admin_event(
+        category: :session,
+        event: :session_start,
+        result: :started,
+      )
       render_json(session_payload(session.reload))
     rescue ActiveRecord::RecordInvalid
       render_error(
@@ -653,6 +760,11 @@ module ::InteractiveHeartbeat
       return if performed?
 
       session.pause!
+      record_admin_event(
+        category: :session,
+        event: :session_pause,
+        result: :paused,
+      )
       render_json(session_payload(session.reload))
     end
 
@@ -662,6 +774,11 @@ module ::InteractiveHeartbeat
 
       session.end!
       notify_other_participant!(session.reload, "session_ended")
+      record_admin_event(
+        category: :session,
+        event: :session_end,
+        result: :ended,
+      )
       render_json(session_payload(session.reload))
     end
 
@@ -670,7 +787,15 @@ module ::InteractiveHeartbeat
       return if performed?
 
       touch_presence!(session)
-      session.reload.refresh_presence_state!
+      automatically_paused = session.reload.refresh_presence_state!
+      if automatically_paused
+        record_admin_event(
+          category: :session,
+          event: :session_pause,
+          result: :paused,
+          severity: :warning,
+        )
+      end
       render_json(
         status: session.reload.status,
         participants: session.participants.reload.map { |participant| presence_payload(participant) },
@@ -701,10 +826,28 @@ module ::InteractiveHeartbeat
         )
       end
 
-      render_json(::InteractiveHeartbeat::LovenseClient.authorization_payload(current_user))
+      payload = ::InteractiveHeartbeat::LovenseClient.authorization_payload(current_user)
+      record_admin_event(
+        category: :lovense,
+        event: :lovense_token,
+        result: :success,
+      )
+      render_json(payload)
     rescue ::InteractiveHeartbeat::LovenseClient::ConfigurationError => e
+      record_admin_event(
+        category: :lovense,
+        event: :lovense_token,
+        result: :not_configured,
+        severity: :warning,
+      )
       render_error("lovense_not_configured", status: 503, message: e.message)
     rescue ::InteractiveHeartbeat::LovenseClient::ProviderError => e
+      record_admin_event(
+        category: :lovense,
+        event: :lovense_token,
+        result: :provider_error,
+        severity: :error,
+      )
       render_error("lovense_unavailable", status: 502, message: e.message)
     end
 
@@ -718,10 +861,28 @@ module ::InteractiveHeartbeat
     end
 
     def test_lab_lovense_token
-      render_json(::InteractiveHeartbeat::LovenseClient.authorization_payload(current_user))
+      payload = ::InteractiveHeartbeat::LovenseClient.authorization_payload(current_user)
+      record_admin_event(
+        category: :lovense,
+        event: :lovense_token,
+        result: :success,
+      )
+      render_json(payload)
     rescue ::InteractiveHeartbeat::LovenseClient::ConfigurationError => e
+      record_admin_event(
+        category: :lovense,
+        event: :lovense_token,
+        result: :not_configured,
+        severity: :warning,
+      )
       render_error("lovense_not_configured", status: 503, message: e.message)
     rescue ::InteractiveHeartbeat::LovenseClient::ProviderError => e
+      record_admin_event(
+        category: :lovense,
+        event: :lovense_token,
+        result: :provider_error,
+        severity: :error,
+      )
       render_error("lovense_unavailable", status: 502, message: e.message)
     end
 
@@ -743,7 +904,23 @@ module ::InteractiveHeartbeat
     def enforce_request_rate_limit
       ::InteractiveHeartbeat::RequestRateLimiter.perform!(action_name, current_user)
     rescue ::InteractiveHeartbeat::RequestRateLimiter::LimitExceeded
+      record_admin_event(
+        category: :security,
+        event: :request_rate_limit,
+        result: :limit_reached,
+        severity: :warning,
+      )
       render_error("rate_limited", status: 429, message: "Too many requests. Please try again shortly.")
+    end
+
+    def record_admin_event(category:, event:, result:, severity: :info)
+      ::InteractiveHeartbeat::AdminEventLog.record(
+        category: category,
+        event: event,
+        result: result,
+        severity: severity,
+        client_context: ::InteractiveHeartbeat::AdminEventLog.client_context_for(request),
+      )
     end
 
     def participant_sessions

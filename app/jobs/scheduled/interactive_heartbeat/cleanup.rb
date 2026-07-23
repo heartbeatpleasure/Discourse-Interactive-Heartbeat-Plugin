@@ -21,14 +21,30 @@ module Jobs
             cutoff,
           )
 
+        deleted = 0
         scope.in_batches(of: 100) do |batch|
           tokens = batch.pluck(:token)
           ::InteractiveHeartbeat::SessionNotifier.clear_all_for!(session_tokens: tokens)
+          deleted += batch.count
           batch.destroy_all
         end
+
+        ::InteractiveHeartbeat::AdminEventLog.record(
+          category: :cleanup,
+          event: :cleanup,
+          result: deleted.positive? ? :success : :no_change,
+          client_context: :server,
+        )
       rescue => e
         Rails.logger.warn(
           "[interactive_heartbeat] completed_session_cleanup_failed error=#{e.class}",
+        )
+        ::InteractiveHeartbeat::AdminEventLog.record(
+          category: :cleanup,
+          event: :cleanup,
+          result: :failed,
+          severity: :error,
+          client_context: :server,
         )
       end
     end
