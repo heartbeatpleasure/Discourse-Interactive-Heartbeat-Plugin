@@ -2,7 +2,7 @@
 
 # name: Discourse-Interactive-Heartbeat-Plugin
 # about: Private, consent-based heartbeat sessions with Lovense toy control
-# version: 0.9.2
+# version: 0.9.3
 # authors: Chris
 # url: https://github.com/xxxxxx/Discourse-Interactive-Heartbeat-Plugin
 # required_version: 3.3.0
@@ -112,12 +112,20 @@ after_initialize do
   end
 
   Discourse::Application.routes.append do
+    get "/admin/plugins/interactive-heartbeat" => "admin/plugins#index",
+        constraints: AdminConstraint.new
+    get "/admin/plugins/interactive-heartbeat-health" => "admin/plugins#index",
+        constraints: AdminConstraint.new
+    get "/admin/plugins/interactive-heartbeat-events" => "admin/plugins#index",
+        constraints: AdminConstraint.new
     get "/admin/plugins/interactive-heartbeat/health.json" =>
           "interactive_heartbeat/admin_health#index",
-        defaults: { format: :json }
+        defaults: { format: :json },
+        constraints: AdminConstraint.new
     get "/admin/plugins/interactive-heartbeat/events.json" =>
           "interactive_heartbeat/admin_events#index",
-        defaults: { format: :json }
+        defaults: { format: :json },
+        constraints: AdminConstraint.new
 
     get "/interactive-heartbeat" => "interactive_heartbeat/page#index"
     get "/interactive-heartbeat/sessions/:token" => "interactive_heartbeat/page#index"

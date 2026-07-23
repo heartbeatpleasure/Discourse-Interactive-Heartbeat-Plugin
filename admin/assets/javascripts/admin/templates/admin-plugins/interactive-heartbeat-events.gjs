@@ -48,6 +48,14 @@ export default RouteTemplate(
         font-size: var(--font-down-1);
       }
 
+      .ih-events__actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.65rem;
+      }
+
       .ih-events__filters {
         display: flex;
         flex-wrap: wrap;
@@ -114,6 +122,10 @@ export default RouteTemplate(
         .ih-events__toolbar {
           flex-direction: column;
         }
+
+        .ih-events__actions {
+          justify-content: flex-start;
+        }
       }
     </style>
 
@@ -121,31 +133,42 @@ export default RouteTemplate(
       <section class="ih-events__hero">
         <div class="ih-events__header">
           <div class="ih-events__copy">
-            <a href="/admin/plugins/interactive-heartbeat">
-              {{i18n "admin.interactive_heartbeat.events.back_to_overview"}}
-            </a>
             <h1>{{i18n "admin.interactive_heartbeat.events.title"}}</h1>
             <p class="ih-events__muted">
               {{i18n "admin.interactive_heartbeat.events.description"}}
             </p>
           </div>
-          <button
-            type="button"
-            class="btn btn-primary"
-            disabled={{this.isLoading}}
-            {{on "click" this.loadEvents}}
-          >
-            {{if
-              this.isLoading
-              (i18n "admin.interactive_heartbeat.events.refreshing")
-              (i18n "admin.interactive_heartbeat.events.refresh")
-            }}
-          </button>
+          <div class="ih-events__actions">
+            <button
+              type="button"
+              class="btn"
+              disabled={{@controller.isLoading}}
+              {{on "click" @controller.loadEvents}}
+            >
+              {{if
+                @controller.isLoading
+                (i18n "admin.interactive_heartbeat.events.refreshing")
+                (i18n "admin.interactive_heartbeat.events.refresh")
+              }}
+            </button>
+            <a class="btn" href="/admin/plugins/interactive-heartbeat-health">
+              {{i18n "admin.interactive_heartbeat.health.short_title"}}
+            </a>
+            <a
+              class="btn"
+              href="/admin/site_settings/category/all_results?filter=interactive_heartbeat"
+            >
+              {{i18n "admin.interactive_heartbeat.open_settings"}}
+            </a>
+            <a class="btn" href="/admin/plugins/interactive-heartbeat">
+              {{i18n "admin.interactive_heartbeat.events.back_to_overview"}}
+            </a>
+          </div>
         </div>
       </section>
 
-      {{#if this.error}}
-        <section class="ih-events__panel ih-events__error">{{this.error}}</section>
+      {{#if @controller.error}}
+        <section class="ih-events__panel ih-events__error">{{@controller.error}}</section>
       {{/if}}
 
       <section class="ih-events__panel">
@@ -155,12 +178,12 @@ export default RouteTemplate(
             <p class="ih-events__muted">
               {{i18n "admin.interactive_heartbeat.events.recent_description"}}
             </p>
-            {{#if this.data}}
+            {{#if @controller.data}}
               <p class="ih-events__muted">
-                {{this.totalLabel}} · {{this.retentionLabel}} ·
+                {{@controller.totalLabel}} · {{@controller.retentionLabel}} ·
                 {{i18n
                   "admin.interactive_heartbeat.events.last_checked"
-                  time=this.generatedAtLabel
+                  time=@controller.generatedAtLabel
                 }}
               </p>
             {{/if}}
@@ -169,7 +192,7 @@ export default RouteTemplate(
           <div class="ih-events__filters">
             <label class="ih-events__field">
               <span>{{i18n "admin.interactive_heartbeat.events.category_filter"}}</span>
-              <select {{on "change" this.changeCategory}}>
+              <select {{on "change" @controller.changeCategory}}>
                 <option value="">{{i18n "admin.interactive_heartbeat.events.all_categories"}}</option>
                 <option value="session">{{i18n "admin.interactive_heartbeat.events.categories.session"}}</option>
                 <option value="invitation">{{i18n "admin.interactive_heartbeat.events.categories.invitation"}}</option>
@@ -183,7 +206,7 @@ export default RouteTemplate(
 
             <label class="ih-events__field">
               <span>{{i18n "admin.interactive_heartbeat.events.severity_filter"}}</span>
-              <select {{on "change" this.changeSeverity}}>
+              <select {{on "change" @controller.changeSeverity}}>
                 <option value="">{{i18n "admin.interactive_heartbeat.events.all_severities"}}</option>
                 <option value="info">{{i18n "admin.interactive_heartbeat.events.severities.info"}}</option>
                 <option value="warning">{{i18n "admin.interactive_heartbeat.events.severities.warning"}}</option>
@@ -193,7 +216,7 @@ export default RouteTemplate(
           </div>
         </div>
 
-        {{#if this.hasEvents}}
+        {{#if @controller.hasEvents}}
           <div class="ih-events__table-wrap">
             <table class="ih-events__table">
               <thead>
@@ -207,7 +230,7 @@ export default RouteTemplate(
                 </tr>
               </thead>
               <tbody>
-                {{#each this.eventRows as |row|}}
+                {{#each @controller.eventRows as |row|}}
                   <tr>
                     <td>{{row.occurredAt}}</td>
                     <td><span class="ih-events__severity {{row.severityClass}}">{{row.severityLabel}}</span></td>
@@ -220,7 +243,7 @@ export default RouteTemplate(
               </tbody>
             </table>
           </div>
-        {{else if this.isLoading}}
+        {{else if @controller.isLoading}}
           <p>{{i18n "admin.interactive_heartbeat.events.loading"}}</p>
         {{else}}
           <p>{{i18n "admin.interactive_heartbeat.events.no_events"}}</p>

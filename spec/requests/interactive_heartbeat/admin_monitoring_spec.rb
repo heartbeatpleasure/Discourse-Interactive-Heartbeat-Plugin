@@ -71,4 +71,27 @@ RSpec.describe "Interactive Heartbeat admin monitoring", type: :request do
       "heart_rate",
     )
   end
+  it "serves all admin monitoring frontend routes to administrators" do
+    sign_in(admin)
+
+    get "/admin/plugins/interactive-heartbeat"
+    expect(response.status).to eq(200)
+
+    get "/admin/plugins/interactive-heartbeat-health"
+    expect(response.status).to eq(200)
+
+    get "/admin/plugins/interactive-heartbeat-events"
+    expect(response.status).to eq(200)
+  end
+
+  it "does not expose admin monitoring frontend routes to regular users" do
+    sign_in(user)
+
+    get "/admin/plugins/interactive-heartbeat-health"
+    expect(response.status).not_to eq(200)
+
+    get "/admin/plugins/interactive-heartbeat-events"
+    expect(response.status).not_to eq(200)
+  end
+
 end

@@ -8,7 +8,11 @@ export default class AdminPluginsInteractiveHeartbeatEventsRoute extends Discour
 
   setupController(controller) {
     super.setupController(...arguments);
-    controller?.resetState?.();
-    controller?.loadEvents?.();
+    if (typeof controller?.resetState === "function") {
+      controller.resetState();
+      if (typeof controller?.loadEvents === "function") {
+        controller.loadEvents();
+      }
+    }
   }
 }

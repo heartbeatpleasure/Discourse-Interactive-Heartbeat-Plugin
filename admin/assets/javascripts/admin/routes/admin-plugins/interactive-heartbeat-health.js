@@ -8,7 +8,11 @@ export default class AdminPluginsInteractiveHeartbeatHealthRoute extends Discour
 
   setupController(controller) {
     super.setupController(...arguments);
-    controller?.resetState?.();
-    controller?.loadHealth?.();
+    if (typeof controller?.resetState === "function") {
+      controller.resetState();
+      if (typeof controller?.loadHealth === "function") {
+        controller.loadHealth();
+      }
+    }
   }
 }

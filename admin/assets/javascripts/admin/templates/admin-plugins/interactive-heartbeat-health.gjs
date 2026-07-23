@@ -179,52 +179,61 @@ export default RouteTemplate(
       <section class="ih-health__hero">
         <div class="ih-health__header">
           <div class="ih-health__copy">
-            <a href="/admin/plugins/interactive-heartbeat">
-              {{i18n "admin.interactive_heartbeat.health.back_to_overview"}}
-            </a>
             <h1>{{i18n "admin.interactive_heartbeat.health.title"}}</h1>
             <p class="ih-health__muted">
               {{i18n "admin.interactive_heartbeat.health.description"}}
             </p>
           </div>
           <div class="ih-health__actions">
-            {{#if this.hasData}}
-              <span class="ih-health__status {{this.overallClass}}">
-                {{this.overallLabel}}
+            {{#if @controller.hasData}}
+              <span class="ih-health__status {{@controller.overallClass}}">
+                {{@controller.overallLabel}}
               </span>
             {{/if}}
             <button
               type="button"
-              class="btn btn-primary"
-              disabled={{this.isLoading}}
-              {{on "click" this.loadHealth}}
+              class="btn"
+              disabled={{@controller.isLoading}}
+              {{on "click" @controller.loadHealth}}
             >
               {{if
-                this.isLoading
+                @controller.isLoading
                 (i18n "admin.interactive_heartbeat.health.refreshing")
                 (i18n "admin.interactive_heartbeat.health.refresh")
               }}
             </button>
+            <a class="btn" href="/admin/plugins/interactive-heartbeat-events">
+              {{i18n "admin.interactive_heartbeat.events.short_title"}}
+            </a>
+            <a
+              class="btn"
+              href="/admin/site_settings/category/all_results?filter=interactive_heartbeat"
+            >
+              {{i18n "admin.interactive_heartbeat.open_settings"}}
+            </a>
+            <a class="btn" href="/admin/plugins/interactive-heartbeat">
+              {{i18n "admin.interactive_heartbeat.health.back_to_overview"}}
+            </a>
           </div>
         </div>
-        {{#if this.hasData}}
+        {{#if @controller.hasData}}
           <p class="ih-health__detail">
-            {{this.overallDescription}} ·
+            {{@controller.overallDescription}} ·
             {{i18n
               "admin.interactive_heartbeat.health.last_checked"
-              time=this.generatedAtLabel
+              time=@controller.generatedAtLabel
             }}
           </p>
         {{/if}}
       </section>
 
-      {{#if this.error}}
-        <section class="ih-health__panel ih-health__error">{{this.error}}</section>
+      {{#if @controller.error}}
+        <section class="ih-health__panel ih-health__error">{{@controller.error}}</section>
       {{/if}}
 
-      {{#if this.hasData}}
+      {{#if @controller.hasData}}
         <section class="ih-health__grid">
-          {{#each this.summaryCards as |card|}}
+          {{#each @controller.summaryCards as |card|}}
             <article class="ih-health__card">
               <span class="ih-health__badge {{card.badgeClass}}">{{card.label}}</span>
               <strong>{{card.value}}</strong>
@@ -242,9 +251,9 @@ export default RouteTemplate(
               </p>
             </div>
           </div>
-          {{#if this.hasWarnings}}
+          {{#if @controller.hasWarnings}}
             <ul class="ih-health__warning-list">
-              {{#each this.warningItems as |warning|}}
+              {{#each @controller.warningItems as |warning|}}
                 <li class="ih-health__warning">
                   <span class="ih-health__badge {{warning.badgeClass}}">!</span>
                   <div>
@@ -267,7 +276,7 @@ export default RouteTemplate(
             </p>
           </div>
           <div class="ih-health__rows">
-            {{#each this.sessionRows as |row|}}
+            {{#each @controller.sessionRows as |row|}}
               <div class="ih-health__row"><span>{{row.label}}</span><strong>{{row.value}}</strong></div>
             {{/each}}
           </div>
@@ -281,7 +290,7 @@ export default RouteTemplate(
             </p>
           </div>
           <div class="ih-health__rows">
-            {{#each this.dependencyRows as |row|}}
+            {{#each @controller.dependencyRows as |row|}}
               <div class="ih-health__row"><span>{{row.label}}</span><strong>{{row.value}}</strong></div>
             {{/each}}
           </div>
@@ -295,7 +304,7 @@ export default RouteTemplate(
             </p>
           </div>
           <div class="ih-health__rows">
-            {{#each this.configurationRows as |row|}}
+            {{#each @controller.configurationRows as |row|}}
               <div class="ih-health__row"><span>{{row.label}}</span><strong>{{row.value}}</strong></div>
             {{/each}}
           </div>
@@ -308,14 +317,14 @@ export default RouteTemplate(
               {{i18n "admin.interactive_heartbeat.health.privacy_description"}}
             </p>
           </div>
-          {{#each this.privacyRows as |row|}}
+          {{#each @controller.privacyRows as |row|}}
             <div class="ih-health__privacy-row">
               <div class="ih-health__row"><span>{{row.label}}</span><strong>{{row.value}}</strong></div>
               <p class="ih-health__detail">{{row.detail}}</p>
             </div>
           {{/each}}
         </section>
-      {{else if this.isLoading}}
+      {{else if @controller.isLoading}}
         <section class="ih-health__panel">
           {{i18n "admin.interactive_heartbeat.health.loading"}}
         </section>
